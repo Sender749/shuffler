@@ -70,10 +70,10 @@ async def callback_query_handler(client, query: CallbackQuery):
             if await udb.is_user_banned(query.from_user.id):
                 await query.answer("🚫 You are banned from using this bot", show_alert=True)
                 return
-                if IS_FSUB and not await get_fsub(client, query.message):
-                    return
-                await query.answer("🎬 Fetching a video...", show_alert=False)
-                await send_random_video_logic(client=client, user=query.from_user, chat_id=query.message.chat.id, reply_func=query.message.reply_text)
+            if IS_FSUB and not await get_fsub(client, query.message):
+                return
+            await query.answer("🎬 Fetching a video...", show_alert=False)
+            await send_random_video_logic(client=client, user=query.from_user, chat_id=query.message.chat.id, reply_func=query.message.reply_text)
 
     except Exception as e:
         print(f"Callback error: {e}")
