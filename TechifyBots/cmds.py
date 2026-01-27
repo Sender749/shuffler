@@ -118,67 +118,63 @@ async def index_flow_handler(client: Client, message: Message):
     state = await mdb.get_index_state(message.from_user.id)
     if not state:
         return
-    if isinstance(DATABASE_CHANNEL_ID, int):
-        allowed_channels = {DATABASE_CHANNEL_ID}
-    else:
-        allowed_channels = set(DATABASE_CHANNEL_ID)
+
+    # ================= STEP 1: CHANNEL MESSAGE =================
     if state["step"] == "await_channel":
+
+        # Get channel from message
         channel = None
-        if message.forward_origin and message.forward_origin.chat:
-            channel = message.forward_origin.chat
-        elif message.sender_chat:
+
+        if message.sender_chat:
             channel = message.sender_chat
+        elif message.forward_from_chat:
+            channel = message.forward_from_chat
+
         if not channel:
-            await message.reply_text(
-                "❌ Please forward or send a message **from the channel**."
-            )
+            await message.reply_text("❌ Please send or forward a message from the channel.")
             return
+
+        # ONLY CHECK: channel id must match DATABASE_CHANNEL_ID
+        if channel.id != DATABASE_CHANNEL_ID:
+            await message.reply_text("❌ msg is not belong to indexed channel")
+            return
+
         await mdb.set_index_state(message.from_user.id, {
             "step": "await_skip",
-            "channel_id": channel_id
+            "channel_id": channel.id
         })
+
         await message.delete()
+
         await client.send_message(
             message.chat.id,
             "📌 **Send skip value**\n\n"
             "• `0` → index all files\n"
             "• message link\n"
-            "• message id",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]
-            ])
+            "• message id"
         )
         return
+
+    # ================= STEP 2: SKIP VALUE =================
     if state["step"] == "await_skip":
         channel_id = state["channel_id"]
         try:
             if message.text == "0":
                 start_id = 0
-            elif message.text and "t.me" in message.text:
+            elif "t.me" in message.text:
                 start_id = int(message.text.rsplit("/", 1)[-1])
-            elif message.text:
-                start_id = int(message.text)
             else:
-                raise ValueError
-        except Exception:
-            await message.reply_text(
-                "❌ Invalid input.\n\nSend `0`, message link, or message id."
-            )
+                start_id = int(message.text)
+        except:
+            await message.reply_text("❌ Invalid input. Send 0, message link or message id.")
             return
         await message.delete()
         await mdb.set_index_state(message.from_user.id, {
             "step": "indexing",
             "channel_id": channel_id,
-            "start_id": start_id,
-            "cancel": False
+            "start_id": start_id
         })
-        await client.send_message(
-            message.chat.id,
-            "⏳ **Indexing started...**",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel Indexing", callback_data="cancel_index")]
-            ])
-        )
+        await client.send_message(message.chat.id, "⏳ **Indexing started...**")
         await start_indexing(client, message.from_user.id)
 
 async def start_indexing(client: Client, admin_id: int):
@@ -188,9 +184,6 @@ async def start_indexing(client: Client, admin_id: int):
     indexed = duplicate = skipped = 0
     async for msg in client.iter_history(channel_id):
         if start_id and msg.id <= start_id:
-            break
-        state = await mdb.get_index_state(admin_id)
-        if not state or state.get("cancel"):
             break
         if not msg.video and not msg.document:
             skipped += 1
@@ -211,6 +204,7 @@ async def start_indexing(client: Client, admin_id: int):
         f"♻️ Duplicates: `{duplicate}`\n"
         f"⏭ Skipped: `{skipped}`"
     )
+
 
 
 
