@@ -103,7 +103,7 @@ async def send_random_video(client: Client, message: Message):
 
 @Client.on_message(filters.command("index") & filters.private)
 async def index_cmd(client: Client, message: Message):
-    if message.from_user.id not in ADMIN_ID:
+    if message.from_user.id != ADMIN_ID:
         return
     await mdb.set_index_state(message.from_user.id, {
         "step": "await_channel"
@@ -206,6 +206,7 @@ async def start_indexing(client: Client, admin_id: int):
         f"♻️ Duplicates: `{duplicate}`\n"
         f"⏭ Skipped: `{skipped}`"
     )
+
 
 
 
