@@ -113,20 +113,28 @@ async def index_cmd(client: Client, message: Message):
         "➡️ Send **last message from the indexing channel with tag**",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]]))
 
-@Client.on_message(filters.private & filters.text)
+@Client.on_message(filters.private & filters.incoming)
 async def index_flow_handler(client: Client, message: Message):
     state = await mdb.get_index_state(message.from_user.id)
     if not state:
         return
+
+    # ================= STEP 1: RECEIVE CHANNEL MESSAGE =================
     if state["step"] == "await_channel":
         channel = message.forward_from_chat or message.sender_chat
+
         if not channel:
-            await message.reply_text("❌ Send a valid channel message.")
+            await message.reply_text("❌ Please send or forward a message from the channel.")
             return
+
         channel_id = channel.id
+
+        # Check allowed index channels
         if channel_id not in DATABASE_CHANNEL_ID:
             await message.reply_text("❌ This channel is not allowed for indexing.")
             return
+
+        # Check bot admin permission
         try:
             bot_id = (await client.get_me()).id
             member = await client.get_chat_member(channel_id, bot_id)
@@ -134,13 +142,16 @@ async def index_flow_handler(client: Client, message: Message):
                 await message.reply_text("❌ Bot is not admin in this channel.")
                 return
         except:
-            await message.reply_text("❌ Unable to verify bot permissions.")
+            await message.reply_text("❌ Failed to verify bot permissions.")
             return
+
         await mdb.set_index_state(message.from_user.id, {
             "step": "await_skip",
             "channel_id": channel_id
         })
+
         await message.delete()
+
         await client.send_message(
             message.chat.id,
             "📌 **Send skip value**\n\n"
@@ -151,30 +162,44 @@ async def index_flow_handler(client: Client, message: Message):
                 [InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]
             ])
         )
-    elif state["step"] == "await_skip":
+        return
+
+    # ================= STEP 2: RECEIVE SKIP VALUE =================
+    if state["step"] == "await_skip":
         channel_id = state["channel_id"]
+
         try:
             if message.text == "0":
                 start_id = 0
-            elif "t.me" in message.text:
+            elif message.text and "t.me" in message.text:
                 start_id = int(message.text.rsplit("/", 1)[-1])
-            else:
+            elif message.text:
                 start_id = int(message.text)
+            else:
+                raise ValueError
         except:
             await message.reply_text("❌ Invalid input. Send `0`, message link, or message id.")
             return
+
         await message.delete()
+
         await mdb.set_index_state(message.from_user.id, {
             "step": "indexing",
             "channel_id": channel_id,
             "start_id": start_id,
             "cancel": False
         })
+
         await client.send_message(
             message.chat.id,
             "⏳ **Indexing started...**",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Indexing", callback_data="cancel_index")]]))
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel Indexing", callback_data="cancel_index")]
+            ])
+        )
+
         await start_indexing(client, message.from_user.id)
+
 
 async def start_indexing(client: Client, admin_id: int):
     state = await mdb.get_index_state(admin_id)
@@ -206,6 +231,7 @@ async def start_indexing(client: Client, admin_id: int):
         f"♻️ Duplicates: `{duplicate}`\n"
         f"⏭ Skipped: `{skipped}`"
     )
+
 
 
 
