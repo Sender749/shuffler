@@ -70,21 +70,14 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
             f">Limit will reset every day at 5 AM (IST).**"
         )
         return
-
     try:
-        caption_text = (
-            "<b><blockquote>🔞 Powered by: "
-            "[TechifyBots](https://telegram.me/TechifyBots)</blockquote>\n\n"
-            "⚠️ This file will auto delete in 5 minutes!\n\n"
-            "💾 Please *save it in your Saved Messages* or "
-            "*forward it elsewhere* to keep it safe! 🔐</b>"
-        )
+        caption_text = ("<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n")
         dy = await client.copy_message(
-            chat_id=chat_id,
-            from_chat_id=DATABASE_CHANNEL_ID,
-            message_id=random_video["video_id"],
-            caption=caption_text
-        )
+                chat_id=chat_id,
+                from_chat_id=DATABASE_CHANNEL_ID,
+                message_id=random_video["video_id"],
+                caption=caption_text,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
         await mdb.increment_daily_count(user_id)
         await asyncio.sleep(300)
         await dy.delete()
@@ -108,7 +101,104 @@ async def send_random_video(client: Client, message: Message):
         reply_func=message.reply_text
     )
 
+@Client.on_message(filters.command("index") & filters.private)
+async def index_cmd(client: Client, message: Message):
+    if message.from_user.id not in ADMIN_ID:
+        return
+    await mdb.set_index_state(message.from_user.id, {
+        "step": "await_channel"
+    })
+    await message.reply_text(
+        "📥 **Index Mode Started**\n\n"
+        "➡️ Send **last message from the indexing channel with tag**",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]]))
 
+@Client.on_message(filters.private & filters.text)
+async def index_flow_handler(client: Client, message: Message):
+    state = await mdb.get_index_state(message.from_user.id)
+    if not state:
+        return
+    if state["step"] == "await_channel":
+        try:
+            channel = message.forward_from_chat or message.sender_chat
+            if not channel:
+                await message.reply("❌ Invalid channel message.")
+                return
+            channel_id = channel.id
+            if channel_id not in DATABASE_CHANNEL_ID:
+                await message.reply("❌ This channel is not allowed for indexing.")
+                return
+            bot_member = await client.get_chat_member(channel_id, (await client.get_me()).id)
+            if bot_member.status not in ("administrator", "owner"):
+                await message.reply("❌ Bot is not admin in this channel.")
+                return
+            await mdb.set_index_state(message.from_user.id, {
+                "step": "await_skip",
+                "channel_id": channel_id,
+                "last_msg_id": message.message_id
+            })
+            await message.delete()
+            await client.send_message(
+                message.chat.id,
+                "📌 **Send skip number**\n\n"
+                "• `0` → index all\n"
+                "• message link\n"
+                "• message id",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]
+                ])
+            )
+        except Exception as e:
+            await message.reply(f"❌ Error: {e}")
+    elif state["step"] == "await_skip":
+        channel_id = state["channel_id"]
+        if message.text == "0":
+            start_id = 0
+        elif "t.me" in message.text:
+            start_id = int(message.text.split("/")[-1])
+        else:
+            start_id = int(message.text)
+        await message.delete()
+        await mdb.set_index_state(message.from_user.id, {
+            "step": "indexing",
+            "channel_id": channel_id,
+            "start_id": start_id,
+            "cancel": False
+        })
+        await client.send_message(
+            message.chat.id,
+            "⏳ **Indexing started...**",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Indexing", callback_data="cancel_index")]]))
+        await start_indexing(client, message.from_user.id)
+
+async def start_indexing(client: Client, admin_id: int):
+    state = await mdb.get_index_state(admin_id)
+    channel_id = state["channel_id"]
+    start_id = state["start_id"]
+    indexed = duplicate = skipped = 0
+    async for msg in client.iter_history(channel_id, offset_id=start_id):
+        state = await mdb.get_index_state(admin_id)
+        if state.get("cancel"):
+            break
+        if not msg.video and not msg.document:
+            skipped += 1
+            continue
+        if await mdb.video_exists(msg.message_id):
+            duplicate += 1
+            continue
+        await mdb.add_video({
+            "video_id": msg.message_id,
+            "chat_id": channel_id
+        })
+        indexed += 1
+    await mdb.clear_index_state(admin_id)
+    await client.send_message(
+        admin_id,
+        f"✅ **Indexing Completed**\n\n"
+        f"📥 Indexed: `{indexed}`\n"
+        f"♻️ Duplicates: `{duplicate}`\n"
+        f"⏭ Skipped: `{skipped}`"
+    )
 
 
 
