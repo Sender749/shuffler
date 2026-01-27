@@ -75,6 +75,10 @@ async def callback_query_handler(client, query: CallbackQuery):
             await query.answer("🎬 Fetching a video...", show_alert=False)
             await send_random_video_logic(client=client, user=query.from_user, chat_id=query.message.chat.id, reply_func=query.message.reply_text)
 
+        elif query.data == "cancel_index":
+            await mdb.set_index_state(query.from_user.id, {"cancel": True})
+            await query.message.edit_text("❌ Indexing cancelled.")
+
     except Exception as e:
         print(f"Callback error: {e}")
         await query.answer("⚠️ An error occurred. Try again later.", show_alert=True)
