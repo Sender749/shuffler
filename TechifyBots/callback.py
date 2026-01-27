@@ -2,7 +2,8 @@ from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMa
 from pyrogram import Client
 from Script import text
 from vars import ADMIN_ID
-from Database.maindb import mdb, udb
+from Database.maindb import mdb
+from Database.userdb import udb
 from cmds import send_random_video_logic
 from fsub import get_fsub
 
