@@ -119,45 +119,50 @@ async def index_flow_handler(client: Client, message: Message):
     if not state:
         return
     if state["step"] == "await_channel":
+        channel = message.forward_from_chat or message.sender_chat
+        if not channel:
+            await message.reply_text("❌ Send a valid channel message.")
+            return
+        channel_id = channel.id
+        if channel_id not in DATABASE_CHANNEL_ID:
+            await message.reply_text("❌ This channel is not allowed for indexing.")
+            return
         try:
-            channel = message.forward_from_chat or message.sender_chat
-            if not channel:
-                await message.reply("❌ Invalid channel message.")
+            bot_id = (await client.get_me()).id
+            member = await client.get_chat_member(channel_id, bot_id)
+            if member.status not in ("administrator", "owner"):
+                await message.reply_text("❌ Bot is not admin in this channel.")
                 return
-            channel_id = channel.id
-            if channel_id not in DATABASE_CHANNEL_ID:
-                await message.reply("❌ This channel is not allowed for indexing.")
-                return
-            bot_member = await client.get_chat_member(channel_id, (await client.get_me()).id)
-            if bot_member.status not in ("administrator", "owner"):
-                await message.reply("❌ Bot is not admin in this channel.")
-                return
-            await mdb.set_index_state(message.from_user.id, {
-                "step": "await_skip",
-                "channel_id": channel_id,
-                "last_msg_id": message.message_id
-            })
-            await message.delete()
-            await client.send_message(
-                message.chat.id,
-                "📌 **Send skip number**\n\n"
-                "• `0` → index all\n"
-                "• message link\n"
-                "• message id",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]
-                ])
-            )
-        except Exception as e:
-            await message.reply(f"❌ Error: {e}")
+        except:
+            await message.reply_text("❌ Unable to verify bot permissions.")
+            return
+        await mdb.set_index_state(message.from_user.id, {
+            "step": "await_skip",
+            "channel_id": channel_id
+        })
+        await message.delete()
+        await client.send_message(
+            message.chat.id,
+            "📌 **Send skip value**\n\n"
+            "• `0` → index all files\n"
+            "• message link\n"
+            "• message id",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]
+            ])
+        )
     elif state["step"] == "await_skip":
         channel_id = state["channel_id"]
-        if message.text == "0":
-            start_id = 0
-        elif "t.me" in message.text:
-            start_id = int(message.text.split("/")[-1])
-        else:
-            start_id = int(message.text)
+        try:
+            if message.text == "0":
+                start_id = 0
+            elif "t.me" in message.text:
+                start_id = int(message.text.rsplit("/", 1)[-1])
+            else:
+                start_id = int(message.text)
+        except:
+            await message.reply_text("❌ Invalid input. Send `0`, message link, or message id.")
+            return
         await message.delete()
         await mdb.set_index_state(message.from_user.id, {
             "step": "indexing",
@@ -176,18 +181,20 @@ async def start_indexing(client: Client, admin_id: int):
     channel_id = state["channel_id"]
     start_id = state["start_id"]
     indexed = duplicate = skipped = 0
-    async for msg in client.iter_history(channel_id, offset_id=start_id):
+    async for msg in client.iter_history(channel_id):
+        if start_id and msg.id <= start_id:
+            break
         state = await mdb.get_index_state(admin_id)
-        if state.get("cancel"):
+        if not state or state.get("cancel"):
             break
         if not msg.video and not msg.document:
             skipped += 1
             continue
-        if await mdb.video_exists(msg.message_id):
+        if await mdb.video_exists(msg.id):
             duplicate += 1
             continue
         await mdb.add_video({
-            "video_id": msg.message_id,
+            "video_id": msg.id,
             "chat_id": channel_id
         })
         indexed += 1
@@ -199,6 +206,8 @@ async def start_indexing(client: Client, admin_id: int):
         f"♻️ Duplicates: `{duplicate}`\n"
         f"⏭ Skipped: `{skipped}`"
     )
+
+
 
 
 
