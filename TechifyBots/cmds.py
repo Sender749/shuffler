@@ -113,45 +113,44 @@ async def index_cmd(client: Client, message: Message):
         "➡️ Send **last message from the indexing channel with tag**",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]]))
 
-@Client.on_message(filters.private & filters.incoming)
+@Client.on_message(filters.private)
 async def index_flow_handler(client: Client, message: Message):
     state = await mdb.get_index_state(message.from_user.id)
     if not state:
         return
-
-    # ================= STEP 1: RECEIVE CHANNEL MESSAGE =================
+    if isinstance(DATABASE_CHANNEL_ID, int):
+        allowed_channels = {DATABASE_CHANNEL_ID}
+    else:
+        allowed_channels = set(DATABASE_CHANNEL_ID)
     if state["step"] == "await_channel":
-        channel = message.forward_from_chat or message.sender_chat
-
+        channel = None
+        if message.forward_origin and message.forward_origin.chat:
+            channel = message.forward_origin.chat
+        elif message.sender_chat:
+            channel = message.sender_chat
         if not channel:
-            await message.reply_text("❌ Please send or forward a message from the channel.")
+            await message.reply_text(
+                "❌ Please forward or send a message **from the channel**."
+            )
             return
-
         channel_id = channel.id
-
-        # Check allowed index channels
-        if channel_id not in DATABASE_CHANNEL_ID:
+        if channel_id not in allowed_channels:
             await message.reply_text("❌ This channel is not allowed for indexing.")
             return
-
-        # Check bot admin permission
         try:
             bot_id = (await client.get_me()).id
             member = await client.get_chat_member(channel_id, bot_id)
             if member.status not in ("administrator", "owner"):
                 await message.reply_text("❌ Bot is not admin in this channel.")
                 return
-        except:
+        except Exception:
             await message.reply_text("❌ Failed to verify bot permissions.")
             return
-
         await mdb.set_index_state(message.from_user.id, {
             "step": "await_skip",
             "channel_id": channel_id
         })
-
         await message.delete()
-
         await client.send_message(
             message.chat.id,
             "📌 **Send skip value**\n\n"
@@ -163,11 +162,8 @@ async def index_flow_handler(client: Client, message: Message):
             ])
         )
         return
-
-    # ================= STEP 2: RECEIVE SKIP VALUE =================
     if state["step"] == "await_skip":
         channel_id = state["channel_id"]
-
         try:
             if message.text == "0":
                 start_id = 0
@@ -177,19 +173,18 @@ async def index_flow_handler(client: Client, message: Message):
                 start_id = int(message.text)
             else:
                 raise ValueError
-        except:
-            await message.reply_text("❌ Invalid input. Send `0`, message link, or message id.")
+        except Exception:
+            await message.reply_text(
+                "❌ Invalid input.\n\nSend `0`, message link, or message id."
+            )
             return
-
         await message.delete()
-
         await mdb.set_index_state(message.from_user.id, {
             "step": "indexing",
             "channel_id": channel_id,
             "start_id": start_id,
             "cancel": False
         })
-
         await client.send_message(
             message.chat.id,
             "⏳ **Indexing started...**",
@@ -197,9 +192,7 @@ async def index_flow_handler(client: Client, message: Message):
                 [InlineKeyboardButton("❌ Cancel Indexing", callback_data="cancel_index")]
             ])
         )
-
         await start_indexing(client, message.from_user.id)
-
 
 async def start_indexing(client: Client, admin_id: int):
     state = await mdb.get_index_state(admin_id)
@@ -231,6 +224,7 @@ async def start_indexing(client: Client, admin_id: int):
         f"♻️ Duplicates: `{duplicate}`\n"
         f"⏭ Skipped: `{skipped}`"
     )
+
 
 
 
