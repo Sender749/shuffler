@@ -133,19 +133,6 @@ async def index_flow_handler(client: Client, message: Message):
                 "❌ Please forward or send a message **from the channel**."
             )
             return
-        channel_id = channel.id
-        if channel_id not in allowed_channels:
-            await message.reply_text("❌ This channel is not allowed for indexing.")
-            return
-        try:
-            bot_id = (await client.get_me()).id
-            member = await client.get_chat_member(channel_id, bot_id)
-            if member.status not in ("administrator", "owner"):
-                await message.reply_text("❌ Bot is not admin in this channel.")
-                return
-        except Exception:
-            await message.reply_text("❌ Failed to verify bot permissions.")
-            return
         await mdb.set_index_state(message.from_user.id, {
             "step": "await_skip",
             "channel_id": channel_id
@@ -224,6 +211,7 @@ async def start_indexing(client: Client, admin_id: int):
         f"♻️ Duplicates: `{duplicate}`\n"
         f"⏭ Skipped: `{skipped}`"
     )
+
 
 
 
