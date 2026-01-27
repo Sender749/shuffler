@@ -4,8 +4,8 @@ from Script import text
 from vars import ADMIN_ID
 from Database.maindb import mdb
 from Database.userdb import udb
-from cmds import send_random_video_logic
-from fsub import get_fsub
+from TechifyBots.cmds import send_random_video_logic
+from TechifyBots.fsub import get_fsub
 
 
 @Client.on_callback_query()
