@@ -38,52 +38,76 @@ async def start_command(client, message):
         photo=random.choice(PICS),
         caption=text.START.format(message.from_user.mention),
         reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎥 Get More Videos", callback_data="getvideos_cb")],
             [InlineKeyboardButton("🍿 𝖡𝗎𝗒 𝖲𝗎𝖻𝗌𝖼𝗋𝗂𝗉𝗍𝗂𝗈𝗇 🍾", callback_data="pro")],
             [InlineKeyboardButton("ℹ️ 𝖠𝖻𝗈𝗎𝗍", callback_data="about"),
              InlineKeyboardButton("📚 𝖧𝖾𝗅𝗉", callback_data="help")] 
         ])
     )
 
-@Client.on_message(filters.command("getvideos") & filters.private)
-async def send_random_video(client: Client, message: Message):
-    if await udb.is_user_banned(message.from_user.id):
-        await message.reply("**🚫 You are banned from using this bot**",reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Support 🧑‍💻", url=f"https://t.me/{ADMIN_USERNAME}")]]))
-        return
+async def send_random_video_logic(client: Client, user, chat_id, reply_func):
     limits = await get_updated_limits()
     if limits.get('maintenance', False):
-        await message.reply_text("**🛠️ Bot Under Maintenance — Back Soon!**")
+        await reply_func("**🛠️ Bot Under Maintenance — Back Soon!**")
         return
-    if IS_FSUB and not await get_fsub(client, message):return
-    user_id = message.from_user.id
-    user = await mdb.get_user(user_id)
-    plan = user.get("plan", "free")
+    user_id = user.id
+    db_user = await mdb.get_user(user_id)
+    plan = db_user.get("plan", "free")
     if plan == "prime":
         videos = await mdb.get_all_videos()
     else:
         videos = await mdb.get_free_videos()
+
     if not videos:
-        await message.reply_text("No videos available at the moment.")
+        await reply_func("No videos available at the moment.")
         return
     random_video = random.choice(videos)
-    daily_count = user.get("daily_count", 0)
-    daily_limit = user.get("daily_limit", FREE_LIMIT)
+    daily_count = db_user.get("daily_count", 0)
+    daily_limit = db_user.get("daily_limit", FREE_LIMIT)
     if daily_count > daily_limit:
-        await message.reply_text(f"**🚫 You've reached your daily limit of {daily_limit} videos.\n\n>Limit will reset every day at 5 AM (IST).**")
-    else:
-        try:
-            caption_text = "<b><blockquote>🔞 Powered by: [TechifyBots](https://telegram.me/TechifyBots)</blockquote>\n\n⚠️ This file will auto delete in 5 minutes!\n\n💾 Please *save it in your Saved Messages* or *forward it elsewhere* to keep it safe! 🔐</b>"
-            video_id = random_video["video_id"]
-            dy = await client.copy_message(
-                chat_id=message.chat.id,
-                from_chat_id=DATABASE_CHANNEL_ID,
-                message_id=video_id,
-                caption=caption_text)
-            await mdb.increment_daily_count(user_id)
-            await asyncio.sleep(300)
-            await dy.delete()
-        except Exception as e:
-            print(f"Error sending video: {e}")
-            await message.reply_text("Failed to send video..")
+        await reply_func(
+            f"**🚫 You've reached your daily limit of {daily_limit} videos.\n\n"
+            f">Limit will reset every day at 5 AM (IST).**"
+        )
+        return
+
+    try:
+        caption_text = (
+            "<b><blockquote>🔞 Powered by: "
+            "[TechifyBots](https://telegram.me/TechifyBots)</blockquote>\n\n"
+            "⚠️ This file will auto delete in 5 minutes!\n\n"
+            "💾 Please *save it in your Saved Messages* or "
+            "*forward it elsewhere* to keep it safe! 🔐</b>"
+        )
+        dy = await client.copy_message(
+            chat_id=chat_id,
+            from_chat_id=DATABASE_CHANNEL_ID,
+            message_id=random_video["video_id"],
+            caption=caption_text
+        )
+        await mdb.increment_daily_count(user_id)
+        await asyncio.sleep(300)
+        await dy.delete()
+    except Exception as e:
+        print(f"Error sending video: {e}")
+        await reply_func("Failed to send video..")
+
+@Client.on_message(filters.command("getvideos") & filters.private)
+async def send_random_video(client: Client, message: Message):
+    if await udb.is_user_banned(message.from_user.id):
+        await message.reply(
+            "**🚫 You are banned from using this bot**",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Support 🧑‍💻", url=f"https://t.me/{ADMIN_USERNAME}")]]))
+        return
+    if IS_FSUB and not await get_fsub(client, message):
+        return
+    await send_random_video_logic(
+        client=client,
+        user=message.from_user,
+        chat_id=message.chat.id,
+        reply_func=message.reply_text
+    )
+
 
 
 
