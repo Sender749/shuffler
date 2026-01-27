@@ -2,7 +2,10 @@ from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMa
 from pyrogram import Client
 from Script import text
 from vars import ADMIN_ID
-from Database.maindb import mdb
+from Database.maindb import mdb, udb
+from cmds import send_random_video_logic
+from fsub import get_fsub
+
 
 @Client.on_callback_query()
 async def callback_query_handler(client, query: CallbackQuery):
@@ -62,6 +65,15 @@ async def callback_query_handler(client, query: CallbackQuery):
 
         elif query.data == "close":
             await query.message.delete()
+
+        elif query.data == "getvideos_cb":
+            if await udb.is_user_banned(query.from_user.id):
+                await query.answer("🚫 You are banned from using this bot", show_alert=True)
+                return
+                if IS_FSUB and not await get_fsub(client, query.message):
+                    return
+                await query.answer("🎬 Fetching a video...", show_alert=False)
+                await send_random_video_logic(client=client, user=query.from_user, chat_id=query.message.chat.id, reply_func=query.message.reply_text)
 
     except Exception as e:
         print(f"Callback error: {e}")
