@@ -106,66 +106,47 @@ async def index_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     await mdb.set_index_state(message.from_user.id, {
-        "step": "await_channel",
-        "control_msg_id": sent.id
+        "step": "await_channel"
     })
     await message.reply_text(
         "📥 **Index Mode Started**\n\n"
-        "➡️ Send **last message from the indexing channel with tag**",
+         "➡️ Reply to THIS message with the **last message from the indexing channel**",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")]]))
 
-@Client.on_message(filters.private)
-async def index_flow_handler(client: Client, message: Message):
-    state = await mdb.get_index_state(message.from_user.id)
-    if not state:
+@Client.on_message(filters.private & filters.reply)
+async def index_reply_handler(client: Client, message: Message):
+    replied = message.reply_to_message
+    if not replied:
         return
 
-    control_msg_id = state.get("control_msg_id")
-
-    # ================= STEP 1: CHANNEL MESSAGE =================
-    if state["step"] == "await_channel":
+    # STEP 1: admin replied with channel message
+    if "Index Mode Started" in (replied.text or ""):
 
         channel = None
 
-        if message.forward_origin and message.forward_origin.chat:
-            channel = message.forward_origin.chat
-        elif message.sender_chat:
+        if message.sender_chat:
             channel = message.sender_chat
+        elif message.forward_origin and message.forward_origin.chat:
+            channel = message.forward_origin.chat
 
         if not channel:
-            await client.edit_message_text(
-                message.chat.id,
-                control_msg_id,
-                "❌ Please forward/send a message **from the indexing channel**"
-            )
+            await replied.edit_text("❌ Reply with a message FROM the channel.")
             return
 
         if channel.id != DATABASE_CHANNEL_ID:
-            await client.edit_message_text(
-                message.chat.id,
-                control_msg_id,
-                "❌ msg is not belong to indexed channel"
-            )
+            await replied.edit_text("❌ msg is not belong to indexed channel")
             return
 
-        await mdb.set_index_state(message.from_user.id, {
-            "step": "await_skip",
-            "channel_id": channel.id,
-            "control_msg_id": control_msg_id
-        })
-
-        await client.edit_message_text(
-            message.chat.id,
-            control_msg_id,
-            "📌 **Send skip value**\n\n"
+        await replied.edit_text(
+            "📌 **Send skip value** (reply to this message)\n\n"
             "• `0` → index all files\n"
             "• message link\n"
             "• message id"
         )
         return
 
-    # ================= STEP 2: SKIP VALUE =================
-    if state["step"] == "await_skip":
+    # STEP 2: admin replied with skip value
+    if "Send skip value" in (replied.text or ""):
 
         try:
             if message.text == "0":
@@ -175,39 +156,18 @@ async def index_flow_handler(client: Client, message: Message):
             else:
                 start_id = int(message.text)
         except:
-            await client.edit_message_text(
-                message.chat.id,
-                control_msg_id,
-                "❌ Invalid input.\nSend `0`, message link or message id."
-            )
+            await replied.edit_text("❌ Invalid input. Reply with `0`, link or message id.")
             return
 
-        await mdb.set_index_state(message.from_user.id, {
-            "step": "indexing",
-            "channel_id": state["channel_id"],
-            "start_id": start_id,
-            "control_msg_id": control_msg_id
-        })
+        await replied.edit_text("⏳ **Indexing started...**")
 
-        await client.edit_message_text(
-            message.chat.id,
-            control_msg_id,
-            "⏳ **Indexing started...**"
-        )
-
-        await start_indexing(client, message.from_user.id)
+        await start_indexing(client, message.from_user.id, start_id, replied)
 
 
-async def start_indexing(client: Client, admin_id: int):
-    state = await mdb.get_index_state(admin_id)
-
-    channel_id = state["channel_id"]
-    start_id = state["start_id"]
-    control_msg_id = state["control_msg_id"]
-
+async def start_indexing(client: Client, admin_id: int, start_id: int, control_msg: Message):
     indexed = duplicate = skipped = 0
 
-    async for msg in client.get_chat_history(channel_id):
+    async for msg in client.get_chat_history(DATABASE_CHANNEL_ID):
         if start_id and msg.id <= start_id:
             break
 
@@ -221,20 +181,18 @@ async def start_indexing(client: Client, admin_id: int):
 
         await mdb.add_video({
             "video_id": msg.id,
-            "chat_id": channel_id
+            "chat_id": DATABASE_CHANNEL_ID
         })
         indexed += 1
 
-    await mdb.clear_index_state(admin_id)
-
-    await client.edit_message_text(
-        admin_id,
-        control_msg_id,
+    await control_msg.edit_text(
         f"✅ **Indexing Completed**\n\n"
         f"📥 Indexed: `{indexed}`\n"
         f"♻️ Duplicates: `{duplicate}`\n"
         f"⏭ Skipped: `{skipped}`"
     )
+
+
 
 
 
