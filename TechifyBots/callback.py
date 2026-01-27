@@ -6,7 +6,7 @@ from Database.maindb import mdb
 from Database.userdb import udb
 from TechifyBots.cmds import send_random_video_logic
 from TechifyBots.fsub import get_fsub
-
+from vars import IS_FSUB
 
 @Client.on_callback_query()
 async def callback_query_handler(client, query: CallbackQuery):
