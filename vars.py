@@ -7,7 +7,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://gd3251791:tvTkKkoJFybHhB5w@cluster0.b2a0n.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 DATABASE_CHANNEL_ID = int(os.getenv("DATABASE_CHANNEL_ID", "-1003136895050"))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6541030917"))
-PICS = (os.environ.get("PICS", "s://envs.sh/iKu.jpg https://envs.sh/iKE.jpg https://envs.sh/iKe.jpg https://envs.sh/iKi.jpg https://envs.sh/iKb.jpg")).split()
+PICS = (os.environ.get("PICS", "https://envs.sh/iKu.jpg https://envs.sh/iKE.jpg https://envs.sh/iKe.jpg https://envs.sh/iKi.jpg https://envs.sh/iKb.jpg")).split()
 LOG_CHNL = int(os.getenv("LOG_CHNL", "-1003137381162"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Navex_69") # Without @
 IS_FSUB = bool(os.environ.get("FSUB", False))
