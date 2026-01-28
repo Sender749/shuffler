@@ -48,9 +48,9 @@ async def start_index(client: Client, message: Message):
             chat_id = parts[-2]
             if chat_id.isnumeric():
                 chat_id = int("-100" + chat_id)
-        elif msg.forward_from_chat:
-            chat_id = msg.forward_from_chat.id
-            last_msg_id = msg.forward_from_message_id
+        elif msg.forward_origin and msg.forward_origin.chat:
+            chat_id = msg.forward_origin.chat.sender_chat.id
+            last_msg_id = msg.forward_origin.message_id
         else:
             return await message.reply("❌ Invalid input.")
     except Exception:
@@ -85,7 +85,7 @@ async def start_index(client: Client, message: Message):
 # -------------------------------
 # Callback handler
 # -------------------------------
-@Client.on_callback_query(filters.regex("^index#"))
+@Client.on_callback_query(filters.regex("^index#") & filters.user(ADMIN_ID))
 async def index_callback(client, query):
     global CANCEL_INDEX
 
@@ -163,5 +163,6 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
 
 
