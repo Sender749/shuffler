@@ -10,6 +10,7 @@ from pyrogram.errors import FloodWait, MessageNotModified
 
 lock = asyncio.Lock()
 CANCEL_INDEX = False
+INDEX_STATE = {}
 
 @Client.on_message(filters.chat(DATABASE_CHANNEL_ID) & filters.video)
 async def save_video(client: Client, message: Message):
@@ -25,6 +26,7 @@ async def save_video(client: Client, message: Message):
 
 @Client.on_message(filters.command("index") & filters.private & filters.user(ADMIN_ID))
 async def start_index(client: Client, message: Message):
+    INDEX_STATE[message.from_user.id] = {"step": "await_channel"}
     if lock.locked():
         return await message.reply("⏳ An indexing process is already running.")
 
@@ -172,6 +174,7 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
 
 
 
