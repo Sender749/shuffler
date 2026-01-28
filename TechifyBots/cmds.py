@@ -77,6 +77,7 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
                 from_chat_id=DATABASE_CHANNEL_ID,
                 message_id=random_video["video_id"],
                 caption=caption_text,
+                protect_content=PROTECT_CONTENT,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
         await mdb.increment_daily_count(user_id)
         await asyncio.sleep(300)
@@ -100,4 +101,5 @@ async def send_random_video(client: Client, message: Message):
         chat_id=message.chat.id,
         reply_func=message.reply_text
     )
+
 
