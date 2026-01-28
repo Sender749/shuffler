@@ -33,6 +33,33 @@ async def start_index(client, message):
         "📌 Forward last database channel message or send channel message link."
     )
 
+def parse_channel_message(message: Message):
+    chat_id = None
+    last_msg_id = None
+
+    # Case 1: message link
+    if message.text:
+        text = message.text.strip()
+        if "t.me/" in text:
+            try:
+                parts = text.split("/")
+                last_msg_id = int(parts[-1])
+
+                if parts[-2] == "c":  # private channel
+                    chat_id = int("-100" + parts[-3])
+                else:  # public channel
+                    chat_id = parts[-2]
+            except:
+                pass
+
+    # Case 2: forwarded / copied message
+    if not chat_id and message.forward_origin:
+        if message.forward_origin.chat:
+            chat_id = message.forward_origin.chat.id
+            last_msg_id = message.forward_origin.message_id
+
+    return chat_id, last_msg_id
+
 @Client.on_message(filters.private & filters.user(ADMIN_ID))
 async def index_flow(client, message):
     state = INDEX_STATE.get(message.from_user.id)
@@ -101,7 +128,7 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         try:
             async for msg in client.iter_messages(
                 DATABASE_CHANNEL_ID,
-                offset_id=last_msg_id,
+                offset_id=last_msg_id + 1,
                 reverse=False
             ):
                 if skip > 0:
@@ -149,6 +176,7 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
 
 
 
