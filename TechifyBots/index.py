@@ -41,20 +41,29 @@ async def start_index(client: Client, message: Message):
     await ask.delete()
 
     # Resolve channel + last message ID
-    try:
-        if msg.text and msg.text.startswith("https://t.me/"):
-            parts = msg.text.split("/")
-            last_msg_id = int(parts[-1])
-            chat_id = parts[-2]
-            if chat_id.isnumeric():
-                chat_id = int("-100" + chat_id)
-        elif msg.forward_origin.chat.sender_chat:
-            chat_id = msg.forward_from_chat.id
-            last_msg_id = msg.forward_origin.message_id
-        else:
-            return await message.reply("❌ Invalid input.")
-    except Exception:
-        return await message.reply("❌ Failed to parse message.")
+    chat_id = None
+    last_msg_id = None
+    if msg.text:
+        text = msg.text.strip()
+        if "t.me/" in text:
+            try:
+                parts = text.split("/")
+                last_msg_id = int(parts[-1])
+                if parts[-2] == "c":  # private channel
+                    chat_id = int("-100" + parts[-3])
+                else:  # public channel
+                    chat_id = parts[-2]
+            except Exception:
+                pass
+
+    if not chat_id and msg.forward_origin:
+        origin = msg.forward_origin
+        if origin.chat:
+            chat_id = origin.chat.id
+            last_msg_id = origin.message_id
+
+    if str(chat_id) != str(DATABASE_CHANNEL_ID):
+        return await message.reply("❌ Failed to parse message.\nSend a valid channel link or forward last channel message.")
 
     if chat_id != DATABASE_CHANNEL_ID:
         return await message.reply("❌ This is not the configured DATABASE_CHANNEL_ID.")
@@ -163,6 +172,7 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
 
 
 
