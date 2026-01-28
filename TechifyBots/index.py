@@ -101,27 +101,25 @@ async def index_flow(client, message):
 @Client.on_callback_query(filters.regex("^index#") & filters.user(ADMIN_ID))
 async def index_callback(client, query):
     global CANCEL_INDEX
-
+    await query.answer()
     data = query.data.split("#")
 
     if data[1] == "abort":
         CANCEL_INDEX = True
-        return await query.message.edit("🛑 Cancel requested…")
+        INDEX_STATE.pop(query.from_user.id, None)
+        return await query.message.edit("🛑 Indexing cancelled.")
 
     if data[1] == "start":
         last_msg_id = int(data[2])
         skip = int(data[3])
+        INDEX_STATE.pop(query.from_user.id, None)
         await query.message.edit("🚀 **Indexing started…**")
         await index_channel(client, query.message, last_msg_id, skip)
 
-
-# -------------------------------
-# Core indexing logic
-# -------------------------------
 async def index_channel(client, status_msg, last_msg_id, skip):
     global CANCEL_INDEX
 
-    saved = dup = skipped = errors = 0
+    saved = skipped = errors = 0
     start_time = time.time()
 
     async with lock:
@@ -176,6 +174,7 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
 
 
 
