@@ -25,72 +25,47 @@ async def save_video(client: Client, message: Message):
         print(f"Error: {str(t)}")
 
 @Client.on_message(filters.command("index") & filters.private & filters.user(ADMIN_ID))
-async def start_index(client: Client, message: Message):
-    INDEX_STATE[message.from_user.id] = {"step": "await_channel"}
+async def start_index(client, message):
     if lock.locked():
         return await message.reply("⏳ An indexing process is already running.")
-
-    ask = await message.reply(
-        "📌 **Forward the last message of the database channel**\n"
-        "or send the **channel message link**."
-    )
-
-    try:
-        msg = await client.listen(message.chat.id, timeout=120)
-    except:
-        return await ask.edit("❌ Timeout.")
-
-    await ask.delete()
-
-    # Resolve channel + last message ID
-    chat_id = None
-    last_msg_id = None
-    if msg.text:
-        text = msg.text.strip()
-        if "t.me/" in text:
-            try:
-                parts = text.split("/")
-                last_msg_id = int(parts[-1])
-                if parts[-2] == "c":  # private channel
-                    chat_id = int("-100" + parts[-3])
-                else:  # public channel
-                    chat_id = parts[-2]
-            except Exception:
-                pass
-
-    if not chat_id and msg.forward_origin:
-        origin = msg.forward_origin
-        if origin.chat:
-            chat_id = origin.chat.id
-            last_msg_id = origin.message_id
-
-    if str(chat_id) != str(DATABASE_CHANNEL_ID):
-        return await message.reply("❌ Failed to parse message.\nSend a valid channel link or forward last channel message.")
-
-    if chat_id != DATABASE_CHANNEL_ID:
-        return await message.reply("❌ This is not the configured DATABASE_CHANNEL_ID.")
-
-    ask_skip = await message.reply("🔢 Send **skip message count** (0 for full index).")
-    try:
-        skip_msg = await client.listen(message.chat.id, timeout=60)
-        skip = int(skip_msg.text)
-    except:
-        return await ask_skip.edit("❌ Invalid skip value.")
-
-    await ask_skip.delete()
-
-    buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ START", callback_data=f"index#start#{last_msg_id}#{skip}")],
-        [InlineKeyboardButton("❌ CANCEL", callback_data="index#abort")]
-    ])
-
+    INDEX_STATE[message.from_user.id] = {"step": "await_channel"}
     await message.reply(
-        f"⚠️ **Confirm indexing**\n\n"
-        f"Channel: `{DATABASE_CHANNEL_ID}`\n"
-        f"Last Msg ID: `{last_msg_id}`\n"
-        f"Skip: `{skip}`",
-        reply_markup=buttons
+        "📌 Forward last database channel message or send channel message link."
     )
+
+@Client.on_message(filters.private & filters.user(ADMIN_ID))
+async def index_flow(client, message):
+    state = INDEX_STATE.get(message.from_user.id)
+    if not state:
+        return
+
+    # ---- STEP 1: channel input ----
+    if state["step"] == "await_channel":
+        chat_id, last_msg_id = parse_channel_message(message)
+        if not chat_id or str(chat_id) != str(DATABASE_CHANNEL_ID):
+            return await message.reply("❌ Invalid database channel.")
+
+        state.update({
+            "step": "await_skip",
+            "last_msg_id": last_msg_id
+        })
+        return await message.reply("🔢 Send skip count (0 for full index).")
+
+    # ---- STEP 2: skip ----
+    if state["step"] == "await_skip":
+        try:
+            skip = int(message.text)
+        except:
+            return await message.reply("❌ Skip must be a number.")
+
+        buttons = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ START", callback_data=f"index#start#{state['last_msg_id']}#{skip}")],
+            [InlineKeyboardButton("❌ CANCEL", callback_data="index#abort")]
+        ])
+
+        state["step"] = "confirm"
+        await message.reply("⚠️ Confirm indexing", reply_markup=buttons)
+
 
 
 # -------------------------------
@@ -127,7 +102,7 @@ async def index_channel(client, status_msg, last_msg_id, skip):
             async for msg in client.iter_messages(
                 DATABASE_CHANNEL_ID,
                 offset_id=last_msg_id,
-                reverse=True
+                reverse=False
             ):
                 if skip > 0:
                     skip -= 1
@@ -174,6 +149,7 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
 
 
 
