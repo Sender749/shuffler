@@ -33,7 +33,11 @@ async def start_index(client: Client, message: Message):
         "or send the **channel message link**."
     )
 
-    msg = await client.listen(message.chat.id, timeout=120)
+    try:
+        msg = await client.listen(message.chat.id, timeout=120)
+    except:
+        return await ask.edit("❌ Timeout.")
+
     await ask.delete()
 
     # Resolve channel + last message ID
@@ -56,13 +60,13 @@ async def start_index(client: Client, message: Message):
         return await message.reply("❌ This is not the configured DATABASE_CHANNEL_ID.")
 
     ask_skip = await message.reply("🔢 Send **skip message count** (0 for full index).")
-    skip_msg = await client.listen(message.chat.id, timeout=60)
-    await ask_skip.delete()
-
     try:
+        skip_msg = await client.listen(message.chat.id, timeout=60)
         skip = int(skip_msg.text)
-    except ValueError:
-        return await message.reply("❌ Skip must be a number.")
+    except:
+        return await ask_skip.edit("❌ Invalid skip value.")
+
+    await ask_skip.delete()
 
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ START", callback_data=f"index#start#{last_msg_id}#{skip}")],
@@ -72,7 +76,7 @@ async def start_index(client: Client, message: Message):
     await message.reply(
         f"⚠️ **Confirm indexing**\n\n"
         f"Channel: `{DATABASE_CHANNEL_ID}`\n"
-        f"Messages: `{last_msg_id}`\n"
+        f"Last Msg ID: `{last_msg_id}`\n"
         f"Skip: `{skip}`",
         reply_markup=buttons
     )
@@ -111,9 +115,13 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         try:
             async for msg in client.iter_messages(
                 DATABASE_CHANNEL_ID,
-                limit=last_msg_id,
-                offset=skip
+                offset_id=last_msg_id,
+                reverse=True
             ):
+                if skip > 0:
+                    skip -= 1
+                    continue
+
                 if CANCEL_INDEX:
                     CANCEL_INDEX = False
                     break
@@ -155,4 +163,5 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
 
