@@ -23,7 +23,7 @@ async def save_video(client: Client, message: Message):
     except Exception as t:
         print(f"Error: {str(t)}")
 
-@Client.on_message(filters.command("index") & filters.private & filters.user(ADMINS))
+@Client.on_message(filters.command("index") & filters.private & filters.user(ADMIN_ID))
 async def start_index(client: Client, message: Message):
     if lock.locked():
         return await message.reply("⏳ An indexing process is already running.")
@@ -155,3 +155,4 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
