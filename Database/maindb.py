@@ -266,26 +266,6 @@ class Database:
             sent_videos = []
         return any(entry.get("message_id") == message_id for entry in sent_videos if isinstance(entry, dict))
 
-    # ================= INDEX STATE (FIXED) =================
-    async def set_index_state(self, user_id: int, data: dict):
-        await self.async_db["index_state"].update_one({"_id": user_id}, {"$set": data}, upsert=True)
-
-    async def get_index_state(self, user_id: int):
-        return await self.async_db["index_state"].find_one({"_id": user_id})
-
-    async def clear_index_state(self, user_id: int):
-        await self.async_db["index_state"].delete_one({"_id": user_id})
-
-    async def video_exists(self, video_id: int):
-        return await self.async_video_collection.find_one({"video_id": video_id}) is not None
-
-    async def add_video(self, data: dict):
-        if not await self.video_exists(data["video_id"]):
-            await self.async_video_collection.insert_one({"video_id": data["video_id"], "chat_id": data["chat_id"], "added_at": datetime.now()})
-
-
-
-
 # Video Delete codes:
 
     async def remove_sent_video(self, user_id: int, video_id: int):
@@ -311,5 +291,6 @@ def format_remaining_time(expiry):
     return f"{days}d {hours}h {minutes}m {seconds}s"
 
 mdb = Database()
+
 
 
