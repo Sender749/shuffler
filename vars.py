@@ -23,3 +23,24 @@ AUTH_CHANNELS = list(map(int, os.environ.get("AUTH_CHANNEL", "").split()))
 DATABASE_CHANNEL_LOG = int(os.getenv("DATABASE_CHANNEL_LOG", "-1003137381162"))
 FREE_VIDEO_DURATION = int(os.getenv("FREE_VIDEO_DURATION", "240"))
 PROTECT_CONTENT  = bool(os.environ.get("PROTECT_CONTENT ", True))
+
+# Verification Settings
+IS_VERIFY = os.environ.get("IS_VERIFY", "True").lower() in ["true", "yes", "1", "enable"]
+FREE_VIDEOS_COUNT = int(os.getenv("FREE_VIDEOS_COUNT", "3"))  # Free videos before verification
+VERIFY_EXPIRE_TIME = int(os.getenv("VERIFY_EXPIRE_TIME", "21600"))  # 6 hours in seconds
+
+# Three Shortlink APIs for verification
+SHORTENER_API1 = os.getenv("SHORTENER_API1", "fb4812435a09dcca63276a47da3c8ac5c23239ef")
+SHORTENER_WEBSITE1 = os.getenv("SHORTENER_WEBSITE1", "instantlinks.co")
+TUTORIAL1 = os.getenv("TUTORIAL1", "https://t.me/Navexdisscussion/33")
+
+SHORTENER_API2 = os.getenv("SHORTENER_API2", "fb4812435a09dcca63276a47da3c8ac5c23239ef")
+SHORTENER_WEBSITE2 = os.getenv("SHORTENER_WEBSITE2", "instantlinks.co")
+TUTORIAL2 = os.getenv("TUTORIAL2", "https://t.me/Navexdisscussion/33")
+
+SHORTENER_API3 = os.getenv("SHORTENER_API3", "fb4812435a09dcca63276a47da3c8ac5c23239ef")
+SHORTENER_WEBSITE3 = os.getenv("SHORTENER_WEBSITE3", "instantlinks.co")
+TUTORIAL3 = os.getenv("TUTORIAL3", "https://t.me/Navexdisscussion/33")
+
+LOG_VR_CHANNEL = int(os.getenv("LOG_VR_CHANNEL", "-1003137381162"))  # Verification log channel
+VERIFY_IMG = os.getenv("VERIFY_IMG", "https://envs.sh/iKu.jpg")
