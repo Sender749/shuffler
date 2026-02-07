@@ -10,6 +10,10 @@ from vars import IS_FSUB
 
 @Client.on_callback_query()
 async def callback_query_handler(client, query: CallbackQuery):
+    # Ignore index-related callbacks (handled in index.py)
+    if query.data.startswith("idx") or query.data.startswith("idxch_") or query.data == "idxcancel":
+        return
+    
     try:
         if query.data == "start":
             await query.message.edit_caption(
