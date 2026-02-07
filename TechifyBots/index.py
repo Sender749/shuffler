@@ -5,7 +5,6 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, 
 import asyncio
 import time
 from pyrogram.errors import FloodWait, MessageNotModified
-import re
 
 lock = asyncio.Lock()
 CANCEL_INDEX = {}
@@ -81,17 +80,28 @@ async def handle_timeout(client: Client, user_id: int):
         except:
             pass
 
-@Client.on_callback_query(filters.regex(r"^idx_ch_"))
+# IMPORTANT: Use specific filter with higher priority
+@Client.on_callback_query(filters.regex(r"^idx_ch_-?\d+$"))
 async def handle_channel_selection(client: Client, callback: CallbackQuery):
     """Handle channel selection"""
     user_id = callback.from_user.id
     state = INDEX_STATE.get(user_id)
     
+    print(f"Channel selection callback triggered: {callback.data}")
+    print(f"User {user_id} state: {state}")
+    
     if not state or state["step"] != "select_channel":
         return await callback.answer("⚠️ Session expired. Please start again with /index", show_alert=True)
     
-    # Extract channel ID
-    channel_id = int(callback.data.split("_")[-1])
+    # Extract channel ID (handle negative IDs properly)
+    try:
+        # Remove 'idx_ch_' prefix
+        channel_id_str = callback.data.replace("idx_ch_", "")
+        channel_id = int(channel_id_str)
+        print(f"Extracted channel ID: {channel_id}")
+    except Exception as e:
+        print(f"Error parsing channel ID: {e}")
+        return await callback.answer("⚠️ Invalid channel ID", show_alert=True)
     
     # Update state
     state.update({
@@ -124,6 +134,8 @@ async def handle_cancel(client: Client, callback: CallbackQuery):
     user_id = callback.from_user.id
     state = INDEX_STATE.get(user_id)
     
+    print(f"Cancel callback triggered for user {user_id}")
+    
     if state:
         # Cancel timeout task
         if "timeout_task" in state:
@@ -141,6 +153,9 @@ async def handle_cancel(client: Client, callback: CallbackQuery):
 
 def extract_message_id_from_link(text: str):
     """Extract message ID from Telegram link or plain number"""
+    if not text:
+        return None
+        
     text = text.strip()
     
     # Check if it's just a number
@@ -173,15 +188,20 @@ async def handle_index_input(client: Client, message: Message):
     if not state:
         return
     
+    print(f"User input received: {message.text}")
+    print(f"Current state: {state}")
+    
     # Delete user's input message
     try:
         await message.delete()
-    except:
-        pass
+    except Exception as e:
+        print(f"Error deleting message: {e}")
     
     # Handle message link input
     if state["step"] == "await_msg_link":
         msg_id = extract_message_id_from_link(message.text or "")
+        
+        print(f"Extracted message ID: {msg_id}")
         
         if msg_id is None:
             return await state["status_msg"].edit_text(
@@ -208,6 +228,8 @@ async def handle_index_input(client: Client, message: Message):
 async def start_indexing(client: Client, user_id: int, channel_id: int, start_msg_id: int, status_msg: Message):
     """Start the actual indexing process"""
     
+    print(f"Starting indexing - Channel: {channel_id}, Start: {start_msg_id}")
+    
     # Update status
     await status_msg.edit_text(
         f"🚀 **Indexing Started**\n\n"
@@ -229,18 +251,10 @@ async def index_channel(client: Client, user_id: int, channel_id: int, start_msg
     
     async with lock:
         try:
-            # Determine the range
-            if start_msg_id == 0:
-                # Index all messages from the beginning
-                offset_id = 0
-                reverse = True
-            else:
-                # Index from start_msg_id onwards
-                offset_id = start_msg_id
-                reverse = True
+            print(f"Starting iteration - Channel: {channel_id}, Offset: {start_msg_id}")
             
-            # Iterate through messages using the client directly
-            async for msg in client.get_chat_history(channel_id, offset_id=offset_id):
+            # Iterate through messages using get_chat_history
+            async for msg in client.get_chat_history(channel_id, offset_id=start_msg_id if start_msg_id > 0 else 0):
                 
                 # Check for cancellation
                 if CANCEL_INDEX.get(user_id, False):
@@ -255,7 +269,7 @@ async def index_channel(client: Client, user_id: int, channel_id: int, start_msg
                     )
                     return
                 
-                # Skip if we're starting from a specific message
+                # Skip if we're starting from a specific message and haven't reached it yet
                 if start_msg_id > 0 and msg.id < start_msg_id:
                     continue
                 
@@ -280,6 +294,7 @@ async def index_channel(client: Client, user_id: int, channel_id: int, start_msg
                     saved += 1
                     
                 except FloodWait as e:
+                    print(f"FloodWait: {e.value}s")
                     await asyncio.sleep(e.value)
                 except Exception as e:
                     print(f"Error saving video {msg.id}: {e}")
@@ -307,9 +322,12 @@ async def index_channel(client: Client, user_id: int, channel_id: int, start_msg
                         print(f"Error updating status: {e}")
         
         except FloodWait as e:
+            print(f"FloodWait in main loop: {e.value}s")
             await asyncio.sleep(e.value)
         except Exception as e:
             print(f"Indexing error: {e}")
+            import traceback
+            traceback.print_exc()
             await status_msg.edit_text(
                 f"❌ **Indexing Failed**\n\n"
                 f"Error: `{str(e)}`\n\n"
