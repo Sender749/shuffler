@@ -1,19 +1,20 @@
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters
 from vars import *
 from Database.maindb import mdb
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
-from pyrogram.types import *
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 import asyncio
 import time
 from pyrogram.errors import FloodWait, MessageNotModified
-
+import re
 
 lock = asyncio.Lock()
-CANCEL_INDEX = False
+CANCEL_INDEX = {}
 INDEX_STATE = {}
+INDEX_TIMEOUT = 900  # 15 minutes in seconds
 
-@Client.on_message(filters.chat(DATABASE_CHANNEL_ID) & filters.video)
+@Client.on_message(filters.chat([ch for ch in DATABASE_CHANNEL_IDS]) & filters.video)
 async def save_video(client: Client, message: Message):
+    """Auto-save videos when posted in database channels"""
     try:
         video_id = message.id
         video_duration = message.video.duration
@@ -22,210 +23,314 @@ async def save_video(client: Client, message: Message):
         text = f"**✅ Saved | ID: {video_id} | ⏱️ {video_duration}s | 💎 {is_premium}**"
         await client.send_message(chat_id=DATABASE_CHANNEL_LOG, text=text)
     except Exception as t:
-        print(f"Error: {str(t)}")
+        print(f"Error auto-saving video: {str(t)}")
 
 @Client.on_message(filters.command("index") & filters.private & filters.user(ADMIN_ID))
-async def start_index(client, message):
+async def start_index(client: Client, message: Message):
+    """Start the indexing process"""
     if lock.locked():
         return await message.reply("⏳ An indexing process is already running.")
-    INDEX_STATE[message.from_user.id] = {"step": "await_last_msg"}
+    
+    user_id = message.from_user.id
+    CANCEL_INDEX[user_id] = False
+    
+    # Get channel names
+    channel_buttons = []
+    for channel_id in DATABASE_CHANNEL_IDS:
+        try:
+            chat = await client.get_chat(channel_id)
+            channel_name = chat.title or f"Channel {channel_id}"
+            channel_buttons.append([
+                InlineKeyboardButton(
+                    text=f"📁 {channel_name}",
+                    callback_data=f"idx_ch_{channel_id}"
+                )
+            ])
+        except Exception as e:
+            print(f"Error getting channel {channel_id}: {e}")
+            channel_buttons.append([
+                InlineKeyboardButton(
+                    text=f"📁 Channel {channel_id}",
+                    callback_data=f"idx_ch_{channel_id}"
+                )
+            ])
+    
+    # Store state
+    INDEX_STATE[user_id] = {
+        "step": "select_channel",
+        "timeout_task": asyncio.create_task(handle_timeout(client, user_id))
+    }
+    
     await message.reply(
-        "📌 **Forward the last message** from the database channel."
+        "📋 **Select Database Channel**\n\nChoose the channel you want to index:",
+        reply_markup=InlineKeyboardMarkup(channel_buttons)
     )
 
-def parse_channel_message(message: Message):
-    """Parse forwarded message or message link to extract chat_id and message_id"""
-    chat_id = None
-    msg_id = None
-
-    # Case 1: Forwarded message
-    if message.forward_origin:
-        if hasattr(message.forward_origin, 'chat') and message.forward_origin.chat:
-            chat_id = message.forward_origin.chat.id
-            msg_id = message.forward_origin.message_id
-        elif hasattr(message.forward_origin, 'channel_post'):
-            # Handle forward from channel
-            if message.forward_origin.chat:
-                chat_id = message.forward_origin.chat.id
-                msg_id = message.forward_origin.message_id
-
-    # Case 2: Message link
-    elif message.text and "t.me/" in message.text:
-        text = message.text.strip()
+async def handle_timeout(client: Client, user_id: int):
+    """Handle 15-minute timeout"""
+    await asyncio.sleep(INDEX_TIMEOUT)
+    state = INDEX_STATE.get(user_id)
+    if state:
+        INDEX_STATE.pop(user_id, None)
+        CANCEL_INDEX.pop(user_id, None)
         try:
-            parts = text.split("/")
-            msg_id = int(parts[-1])
-
-            if parts[-2] == "c":  # private channel link
-                chat_id = int("-100" + parts[-3])
-            else:  # public channel username
-                chat_id = parts[-2]
-        except Exception as e:
-            print(f"Error parsing link: {e}")
-            pass
-
-    return chat_id, msg_id
-
-def parse_start_message(message: Message):
-    """Parse message ID or link for start indexing point"""
-    msg_id = None
-    
-    # Case 1: Just a number (message ID)
-    if message.text and message.text.strip().isdigit():
-        msg_id = int(message.text.strip())
-    
-    # Case 2: Message link
-    elif message.text and "t.me/" in message.text:
-        try:
-            parts = message.text.strip().split("/")
-            msg_id = int(parts[-1])
+            if "status_msg" in state:
+                await state["status_msg"].edit_text(
+                    "⏱️ **Indexing Timeout**\n\nNo response received within 15 minutes. Process cancelled."
+                )
         except:
             pass
+
+@Client.on_callback_query(filters.regex(r"^idx_ch_"))
+async def handle_channel_selection(client: Client, callback: CallbackQuery):
+    """Handle channel selection"""
+    user_id = callback.from_user.id
+    state = INDEX_STATE.get(user_id)
     
-    # Case 3: Forwarded message
-    elif message.forward_origin:
-        if hasattr(message.forward_origin, 'message_id'):
-            msg_id = message.forward_origin.message_id
+    if not state or state["step"] != "select_channel":
+        return await callback.answer("⚠️ Session expired. Please start again with /index", show_alert=True)
     
-    return msg_id
+    # Extract channel ID
+    channel_id = int(callback.data.split("_")[-1])
+    
+    # Update state
+    state.update({
+        "step": "await_msg_link",
+        "channel_id": channel_id,
+        "status_msg": callback.message
+    })
+    
+    # Cancel old timeout and create new one
+    if "timeout_task" in state:
+        state["timeout_task"].cancel()
+    state["timeout_task"] = asyncio.create_task(handle_timeout(client, user_id))
+    
+    await callback.message.edit_text(
+        "📍 **Send Last Message ID or Link**\n\n"
+        "You can send:\n"
+        "• Message ID (e.g., `12345`)\n"
+        "• Message link from the channel\n"
+        "• `0` to index all messages from the beginning\n\n"
+        "⏱️ You have 15 minutes to respond.",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Cancel", callback_data="idx_cancel")
+        ]])
+    )
+    await callback.answer()
 
-@Client.on_message(filters.private & filters.user(ADMIN_ID) & ~filters.command(["index", "stats", "broadcast", "ban", "unban", "maintenance", "banlist", "delete", "deleteall"]))
-async def index_flow(client, message):
-    """Handle multi-step index flow"""
-    state = INDEX_STATE.get(message.from_user.id)
-    if not state:
-        return
-
-    # ---- STEP 1: Get last message ----
-    if state["step"] == "await_last_msg":
-        chat_id, last_msg_id = parse_channel_message(message)
+@Client.on_callback_query(filters.regex(r"^idx_cancel$"))
+async def handle_cancel(client: Client, callback: CallbackQuery):
+    """Handle cancel button"""
+    user_id = callback.from_user.id
+    state = INDEX_STATE.get(user_id)
+    
+    if state:
+        # Cancel timeout task
+        if "timeout_task" in state:
+            state["timeout_task"].cancel()
         
-        if not chat_id or not last_msg_id:
-            return await message.reply("❌ Invalid message. Please forward the last message from the database channel.")
-        
-        if str(chat_id) != str(DATABASE_CHANNEL_ID):
-            return await message.reply(f"❌ This message is not from the database channel.\n\nExpected: `{DATABASE_CHANNEL_ID}`\nReceived: `{chat_id}`")
-
-        state.update({
-            "step": "await_skip",
-            "last_msg_id": last_msg_id
-        })
-        return await message.reply(
-            "🔢 **Send skip numbers (number of messages to skip)**\n\n"
-            "Examples:\n• Send `0` to index all messages\n• Send `10` to skip first 10 messages"
-        )
-
-    # ---- STEP 2: Get skip count ----
-    elif state["step"] == "await_skip":
-        try:
-            skip = int(message.text.strip())
-            if skip < 0:
-                return await message.reply("❌ Skip count must be 0 or greater.")
-        except:
-            return await message.reply("❌ Please send a valid number for skip count.")
-        
-        state.update({
-            "step": "await_start_msg",
-            "skip": skip
-        })
-        return await message.reply(
-            "📍 **Send the message ID or link where indexing should start**\n\n"
-            "You can:\n• Forward a message from the channel\n• Send message ID (e.g., `12345`)\n• Send message link"
-        )
-
-    # ---- STEP 3: Get start message ----
-    elif state["step"] == "await_start_msg":
-        start_msg_id = parse_start_message(message)
-        
-        if not start_msg_id:
-            return await message.reply("❌ Invalid message ID or link. Please try again.")
-        
-        last_msg_id = state["last_msg_id"]
-        skip = state["skip"]
+        # Set cancel flag
+        CANCEL_INDEX[user_id] = True
         
         # Clear state
-        INDEX_STATE.pop(message.from_user.id, None)
+        INDEX_STATE.pop(user_id, None)
+        
+        await callback.message.edit_text("❌ **Indexing Cancelled**\n\nThe indexing process has been stopped.")
+    
+    await callback.answer("Cancelled")
+
+def extract_message_id_from_link(text: str):
+    """Extract message ID from Telegram link or plain number"""
+    text = text.strip()
+    
+    # Check if it's just a number
+    if text.isdigit():
+        return int(text)
+    
+    # Check if it's 0 (index all)
+    if text == "0":
+        return 0
+    
+    # Extract from link
+    if "t.me/" in text:
+        try:
+            # Handle different link formats
+            # https://t.me/c/1234567890/123
+            # https://t.me/username/123
+            parts = text.split("/")
+            return int(parts[-1])
+        except:
+            pass
+    
+    return None
+
+@Client.on_message(filters.private & filters.user(ADMIN_ID) & ~filters.command(["index", "stats", "broadcast", "ban", "unban", "maintenance", "banlist", "delete", "deleteall"]))
+async def handle_index_input(client: Client, message: Message):
+    """Handle user input during indexing flow"""
+    user_id = message.from_user.id
+    state = INDEX_STATE.get(user_id)
+    
+    if not state:
+        return
+    
+    # Delete user's input message
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    # Handle message link input
+    if state["step"] == "await_msg_link":
+        msg_id = extract_message_id_from_link(message.text or "")
+        
+        if msg_id is None:
+            return await state["status_msg"].edit_text(
+                "❌ **Invalid Input**\n\n"
+                "Please send a valid message ID, link, or `0` to index all.\n\n"
+                "⏱️ You have 15 minutes to respond.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Cancel", callback_data="idx_cancel")
+                ]])
+            )
+        
+        # Cancel timeout
+        if "timeout_task" in state:
+            state["timeout_task"].cancel()
+        
+        # Clear state
+        channel_id = state["channel_id"]
+        status_msg = state["status_msg"]
+        INDEX_STATE.pop(user_id, None)
         
         # Start indexing
-        status = await message.reply(
-            f"🚀 **Indexing started...**\n\n"
-            f"Last Message ID: `{last_msg_id}`\n"
-            f"Start Message ID: `{start_msg_id}`\n"
-            f"Skip Count: `{skip}`"
-        )
-        
-        await index_channel(client, status, last_msg_id, start_msg_id, skip)
+        await start_indexing(client, user_id, channel_id, msg_id, status_msg)
 
-async def index_channel(client, status_msg, last_msg_id, start_msg_id, skip):
-    """Index videos from database channel"""
-    global CANCEL_INDEX
-    saved = skipped = errors = 0
+async def start_indexing(client: Client, user_id: int, channel_id: int, start_msg_id: int, status_msg: Message):
+    """Start the actual indexing process"""
+    
+    # Update status
+    await status_msg.edit_text(
+        f"🚀 **Indexing Started**\n\n"
+        f"Channel: `{channel_id}`\n"
+        f"Starting from: `{start_msg_id if start_msg_id > 0 else 'Beginning'}`\n\n"
+        f"⏳ Please wait...",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Cancel", callback_data="idx_cancel")
+        ]])
+    )
+    
+    await index_channel(client, user_id, channel_id, start_msg_id, status_msg)
+
+async def index_channel(client: Client, user_id: int, channel_id: int, start_msg_id: int, status_msg: Message):
+    """Index videos from the database channel"""
+    saved = skipped = duplicates = errors = 0
     start_time = time.time()
-
+    last_update = 0
+    
     async with lock:
         try:
-            # Iterate from start_msg_id to last_msg_id
-            async for msg in client.iter_messages(
-                DATABASE_CHANNEL_ID,
-                offset_id=last_msg_id + 1,
-                reverse=True  # Changed to True to go from old to new
-            ):
-                # Skip until we reach start message
-                if msg.id < start_msg_id:
+            # Determine the range
+            if start_msg_id == 0:
+                # Index all messages from the beginning
+                offset_id = 0
+                reverse = True
+            else:
+                # Index from start_msg_id onwards
+                offset_id = start_msg_id
+                reverse = True
+            
+            # Iterate through messages using the client directly
+            async for msg in client.get_chat_history(channel_id, offset_id=offset_id):
+                
+                # Check for cancellation
+                if CANCEL_INDEX.get(user_id, False):
+                    CANCEL_INDEX[user_id] = False
+                    await status_msg.edit_text(
+                        f"❌ **Indexing Cancelled**\n\n"
+                        f"📊 **Statistics:**\n"
+                        f"✅ Saved: `{saved}`\n"
+                        f"⏭️ Skipped: `{skipped}`\n"
+                        f"🔁 Duplicates: `{duplicates}`\n"
+                        f"❌ Errors: `{errors}`"
+                    )
+                    return
+                
+                # Skip if we're starting from a specific message
+                if start_msg_id > 0 and msg.id < start_msg_id:
                     continue
                 
-                # Apply skip count
-                if skip > 0:
-                    skip -= 1
-                    skipped += 1
-                    continue
-
-                if CANCEL_INDEX:
-                    CANCEL_INDEX = False
-                    break
-
                 # Only process video messages
                 if not msg.video:
                     skipped += 1
                     continue
-
+                
                 try:
                     video_id = msg.id
                     duration = msg.video.duration
                     is_premium = duration > FREE_VIDEO_DURATION
-
+                    
+                    # Check if already exists (duplicate check)
+                    existing = await mdb.async_video_collection.find_one({"video_id": video_id})
+                    if existing:
+                        duplicates += 1
+                        continue
+                    
+                    # Save the video
                     await mdb.save_video_id(video_id, duration, is_premium)
                     saved += 1
+                    
+                except FloodWait as e:
+                    await asyncio.sleep(e.value)
                 except Exception as e:
                     print(f"Error saving video {msg.id}: {e}")
                     errors += 1
-
-                # Update status every 100 messages
-                if (saved + skipped) % 100 == 0:
+                
+                # Update status every 5 seconds or every 50 messages
+                current_time = time.time()
+                if (current_time - last_update) >= 5 or (saved + skipped + duplicates) % 50 == 0:
+                    last_update = current_time
                     try:
                         await status_msg.edit_text(
-                            f"📊 **Indexing in progress...**\n\n"
+                            f"📊 **Indexing in Progress...**\n\n"
                             f"✅ Saved: `{saved}`\n"
                             f"⏭️ Skipped: `{skipped}`\n"
-                            f"❌ Errors: `{errors}`"
+                            f"🔁 Duplicates: `{duplicates}`\n"
+                            f"❌ Errors: `{errors}`\n\n"
+                            f"⏱️ Time: `{int(current_time - start_time)}s`",
+                            reply_markup=InlineKeyboardMarkup([[
+                                InlineKeyboardButton("❌ Cancel", callback_data="idx_cancel")
+                            ]])
                         )
                     except MessageNotModified:
                         pass
-
+                    except Exception as e:
+                        print(f"Error updating status: {e}")
+        
         except FloodWait as e:
             await asyncio.sleep(e.value)
         except Exception as e:
             print(f"Indexing error: {e}")
-            await status_msg.edit_text(f"❌ **Indexing failed:** `{str(e)}`")
+            await status_msg.edit_text(
+                f"❌ **Indexing Failed**\n\n"
+                f"Error: `{str(e)}`\n\n"
+                f"📊 **Statistics:**\n"
+                f"✅ Saved: `{saved}`\n"
+                f"⏭️ Skipped: `{skipped}`\n"
+                f"🔁 Duplicates: `{duplicates}`\n"
+                f"❌ Errors: `{errors}`"
+            )
             return
-
+    
+    # Final success message
     elapsed = round(time.time() - start_time, 2)
-
+    
     await status_msg.edit_text(
-        f"✅ **Indexing completed successfully!**\n\n"
-        f"📊 **Statistics:**\n"
+        f"✅ **Indexing Completed Successfully!**\n\n"
+        f"📊 **Final Statistics:**\n"
         f"✅ Saved: `{saved}`\n"
         f"⏭️ Skipped: `{skipped}`\n"
+        f"🔁 Duplicates: `{duplicates}`\n"
         f"❌ Errors: `{errors}`\n\n"
-        f"⏱️ **Time taken:** `{elapsed}s`"
+        f"⏱️ **Total Time:** `{elapsed}s`\n"
+        f"📁 **Channel:** `{channel_id}`"
     )
