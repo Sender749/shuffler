@@ -84,41 +84,13 @@ async def index_flow(client, message):
             skip = int(message.text)
         except:
             return await message.reply("❌ Skip must be a number.")
-
-        buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ START", callback_data=f"index#start#{state['last_msg_id']}#{skip}")],
-            [InlineKeyboardButton("❌ CANCEL", callback_data="index#abort")]
-        ])
-
-        state["step"] = "confirm"
-        await message.reply("⚠️ Confirm indexing", reply_markup=buttons)
-
-
-
-# -------------------------------
-# Callback handler
-# -------------------------------
-@Client.on_callback_query(filters.regex("^index#") & filters.user(ADMIN_ID))
-async def index_callback(client, query):
-    global CANCEL_INDEX
-    await query.answer()
-    data = query.data.split("#")
-
-    if data[1] == "abort":
-        CANCEL_INDEX = True
-        INDEX_STATE.pop(query.from_user.id, None)
-        return await query.message.edit("🛑 Indexing cancelled.")
-
-    if data[1] == "start":
-        last_msg_id = int(data[2])
-        skip = int(data[3])
-        INDEX_STATE.pop(query.from_user.id, None)
-        await query.message.edit("🚀 **Indexing started…**")
-        await index_channel(client, query.message, last_msg_id, skip)
+        last_msg_id = state["last_msg_id"]
+        INDEX_STATE.pop(message.from_user.id, None)
+        status = await message.reply("🚀 Indexing started…")
+        await index_channel(client, status, last_msg_id, skip)
 
 async def index_channel(client, status_msg, last_msg_id, skip):
     global CANCEL_INDEX
-
     saved = skipped = errors = 0
     start_time = time.time()
 
@@ -174,6 +146,7 @@ async def index_channel(client, status_msg, last_msg_id, skip):
         f"Errors: `{errors}`\n"
         f"⏱ Time: `{elapsed}s`"
     )
+
 
 
 
