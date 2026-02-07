@@ -118,7 +118,7 @@ class Database:
                     await asyncio.sleep(sleep_seconds)
                 await self.async_user_collection.update_many(
                     {},
-                    {"$set": {"daily_count": 0, "last_request_date": datetime.now(IST)}}
+                    {"$set": {"daily_count": 0, "free_trial_count": 0, "last_request_date": datetime.now(IST)}}
                 )
                 self.last_reset_time = datetime.now(IST)
                 await asyncio.sleep(1)
@@ -246,7 +246,12 @@ class Database:
                 "last_request_date": datetime.now(),
                 "sent_videos": [],
                 "prime_expiry": None,
-                "remaining_time": None
+                "remaining_time": None,
+                # Verification fields
+                "free_trial_count": 0,
+                "last_verified": None,
+                "second_time_verified": None,
+                "third_time_verified": None,
             }
             await self.async_user_collection.insert_one(default_user)
             return default_user
@@ -279,6 +284,165 @@ class Database:
     async def delete_video_by_id(self, video_id: int):
         await self.async_video_collection.delete_one({"video_id": video_id})
         return True
+
+# Verification Methods:
+
+    async def increment_free_trial_count(self, user_id: int):
+        """Increment the free trial count for a user"""
+        user = await self.get_user(user_id)
+        today = datetime.now()
+        if user.get("last_request_date") is None or user.get("last_request_date").date() != today.date():
+            await self.update_user(user_id, {"free_trial_count": 1, "last_request_date": today})
+            return 1
+        else:
+            new_count = user.get("free_trial_count", 0) + 1
+            await self.update_user(user_id, {"free_trial_count": new_count})
+            return new_count
+
+    async def is_user_verified(self, user_id: int):
+        """Check if user completed first verification and it's still valid"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return True
+        
+        last_verified = user.get("last_verified")
+        if not last_verified:
+            return False
+        
+        from zoneinfo import ZoneInfo
+        IST = ZoneInfo("Asia/Kolkata")
+        current_time = datetime.now(IST)
+        
+        if last_verified.tzinfo is None:
+            last_verified = last_verified.replace(tzinfo=IST)
+        else:
+            last_verified = last_verified.astimezone(IST)
+        
+        time_diff = (current_time - last_verified).total_seconds()
+        from vars import VERIFY_EXPIRE_TIME
+        return time_diff < VERIFY_EXPIRE_TIME
+
+    async def is_second_verified(self, user_id: int):
+        """Check if user completed second verification and it's still valid"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return True
+        
+        second_verified = user.get("second_time_verified")
+        if not second_verified:
+            return False
+        
+        from zoneinfo import ZoneInfo
+        IST = ZoneInfo("Asia/Kolkata")
+        current_time = datetime.now(IST)
+        
+        if second_verified.tzinfo is None:
+            second_verified = second_verified.replace(tzinfo=IST)
+        else:
+            second_verified = second_verified.astimezone(IST)
+        
+        time_diff = (current_time - second_verified).total_seconds()
+        from vars import VERIFY_EXPIRE_TIME
+        return time_diff < VERIFY_EXPIRE_TIME
+
+    async def is_third_verified(self, user_id: int):
+        """Check if user completed third verification and it's still valid"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return True
+        
+        third_verified = user.get("third_time_verified")
+        if not third_verified:
+            return False
+        
+        from zoneinfo import ZoneInfo
+        IST = ZoneInfo("Asia/Kolkata")
+        current_time = datetime.now(IST)
+        
+        if third_verified.tzinfo is None:
+            third_verified = third_verified.replace(tzinfo=IST)
+        else:
+            third_verified = third_verified.astimezone(IST)
+        
+        time_diff = (current_time - third_verified).total_seconds()
+        from vars import VERIFY_EXPIRE_TIME
+        return time_diff < VERIFY_EXPIRE_TIME
+
+    async def need_second_verification(self, user_id: int):
+        """Check if user needs second verification"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return False
+        
+        last_verified = user.get("last_verified")
+        if not last_verified:
+            return False
+        
+        from zoneinfo import ZoneInfo
+        IST = ZoneInfo("Asia/Kolkata")
+        current_time = datetime.now(IST)
+        
+        if last_verified.tzinfo is None:
+            last_verified = last_verified.replace(tzinfo=IST)
+        else:
+            last_verified = last_verified.astimezone(IST)
+        
+        time_since_first = (current_time - last_verified).total_seconds()
+        from vars import VERIFY_EXPIRE_TIME
+        
+        if time_since_first >= VERIFY_EXPIRE_TIME:
+            return True
+        return False
+
+    async def need_third_verification(self, user_id: int):
+        """Check if user needs third verification"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return False
+        
+        second_verified = user.get("second_time_verified")
+        if not second_verified:
+            return False
+        
+        from zoneinfo import ZoneInfo
+        IST = ZoneInfo("Asia/Kolkata")
+        current_time = datetime.now(IST)
+        
+        if second_verified.tzinfo is None:
+            second_verified = second_verified.replace(tzinfo=IST)
+        else:
+            second_verified = second_verified.astimezone(IST)
+        
+        time_since_second = (current_time - second_verified).total_seconds()
+        from vars import VERIFY_EXPIRE_TIME
+        
+        if time_since_second >= VERIFY_EXPIRE_TIME:
+            return True
+        return False
+
+    async def create_verify_id(self, user_id: int, verify_hash: str):
+        """Create a verification ID record"""
+        verify_collection = self.async_db["verify_ids"]
+        res = {
+            "user_id": user_id,
+            "hash": verify_hash,
+            "verified": False,
+            "created_at": datetime.now()
+        }
+        await verify_collection.insert_one(res)
+        return verify_hash
+
+    async def get_verify_id_info(self, user_id: int, verify_hash: str):
+        """Get verification ID information"""
+        verify_collection = self.async_db["verify_ids"]
+        return await verify_collection.find_one({"user_id": user_id, "hash": verify_hash})
+
+    async def update_verify_id_info(self, user_id: int, verify_hash: str, value: dict):
+        """Update verification ID information"""
+        verify_collection = self.async_db["verify_ids"]
+        myquery = {"user_id": user_id, "hash": verify_hash}
+        newvalues = {"$set": value}
+        return await verify_collection.update_one(myquery, newvalues)
 
 # ==================================================================
 
