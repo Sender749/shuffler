@@ -5,7 +5,15 @@ API_ID = int(os.getenv("API_ID", "25208597"))
 API_HASH = os.getenv("API_HASH", "e99c3c5693d6d23a143b6ce760b7a6de")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://gd3251791:tvTkKkoJFybHhB5w@cluster0.b2a0n.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
-DATABASE_CHANNEL_ID = int(os.getenv("DATABASE_CHANNEL_ID", "-1003136895050"))
+
+# Support multiple database channels - can be single or multiple IDs separated by space
+DATABASE_CHANNEL_ID = os.getenv("DATABASE_CHANNEL_ID", "-1003136895050")
+if " " in DATABASE_CHANNEL_ID:
+    DATABASE_CHANNEL_IDS = [int(x.strip()) for x in DATABASE_CHANNEL_ID.split() if x.strip()]
+else:
+    DATABASE_CHANNEL_IDS = [int(DATABASE_CHANNEL_ID)]
+DATABASE_CHANNEL_ID = DATABASE_CHANNEL_IDS[0]
+
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6541030917"))
 PICS = (os.environ.get("PICS", "https://envs.sh/iKu.jpg https://envs.sh/iKE.jpg https://envs.sh/iKe.jpg https://envs.sh/iKi.jpg https://envs.sh/iKb.jpg")).split()
 LOG_CHNL = int(os.getenv("LOG_CHNL", "-1003137381162"))
