@@ -26,9 +26,16 @@ PROTECT_CONTENT  = bool(os.environ.get("PROTECT_CONTENT ", True))
 
 # Verification Settings
 IS_VERIFY = os.environ.get("IS_VERIFY", "True").lower() in ["true", "yes", "1", "enable"]
-FREE_VIDEOS_COUNT = int(os.getenv("FREE_VIDEOS_COUNT", "3"))  # Free videos before verification
+FREE_DAILY_LIMIT = int(os.getenv("FREE_DAILY_LIMIT", "3"))  # Free videos before verification
 VERIFY_EXPIRE_TIME = int(os.getenv("VERIFY_EXPIRE_TIME", "300"))  # 6 hours in seconds 21600
-
+RESET_DAILY = True
+PREMIUM_BYPASS = True
+VERIFY_STAGES = {
+    1: 5 * 00 * 00,    # 12 hours
+    2: 5 * 00 * 00,    # 1 day
+    3: 5 * 00 * 00    # 3 days
+}
+VERIFY_TOKEN_EXPIRY = 10 * 60 
 # Three Shortlink APIs for verification
 SHORTENER_API1 = os.getenv("SHORTENER_API1", "fb4812435a09dcca63276a47da3c8ac5c23239ef")
 SHORTENER_WEBSITE1 = os.getenv("SHORTENER_WEBSITE1", "instantlinks.co")
