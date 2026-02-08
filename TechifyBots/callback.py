@@ -4,14 +4,18 @@ from Script import text
 from vars import ADMIN_ID
 from Database.maindb import mdb
 from Database.userdb import udb
-from TechifyBots.cmds import send_random_video_logic
+from TechifyBots.cmds import send_random_video_logic, VIDEO_MSG_CACHE
 from TechifyBots.fsub import get_fsub
 from vars import IS_FSUB
 
 @Client.on_callback_query()
 async def callback_query_handler(client, query: CallbackQuery):
-    # Ignore index-related callbacks (handled in index.py)
-    if query.data.startswith("idx") or query.data.startswith("idxch_") or query.data == "idxcancel":
+    # Ignore index-related callbacks FIRST (most specific patterns)
+    if query.data.startswith("idx_ch_"):
+        # This is handled in index.py
+        return
+    if query.data.startswith("idx"):
+        # This is handled in index.py
         return
     
     try:
@@ -77,8 +81,20 @@ async def callback_query_handler(client, query: CallbackQuery):
                 return
             if IS_FSUB and not await get_fsub(client, query.message):
                 return
-            await query.answer("🎬 Fetching a video...", show_alert=False)
-            await send_random_video_logic(client=client, user=query.from_user, chat_id=query.message.chat.id, reply_func=query.message.reply_text)
+            
+            await query.answer("🎬 Fetching video...", show_alert=False)
+            
+            # Get cached message if exists
+            cached_msg = VIDEO_MSG_CACHE.get(query.from_user.id)
+            
+            # Use message editing for smooth UX
+            await send_random_video_logic(
+                client=client, 
+                user=query.from_user, 
+                chat_id=query.message.chat.id, 
+                reply_func=query.message.reply_text,
+                edit_message=cached_msg  # Pass cached message for editing
+            )
 
         elif query.data == "cancel_index":
             await mdb.set_index_state(query.from_user.id, {"cancel": True})
@@ -86,4 +102,6 @@ async def callback_query_handler(client, query: CallbackQuery):
 
     except Exception as e:
         print(f"Callback error: {e}")
+        import traceback
+        traceback.print_exc()
         await query.answer("⚠️ An error occurred. Try again later.", show_alert=True)
