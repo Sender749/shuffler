@@ -10,12 +10,8 @@ from vars import IS_FSUB
 
 @Client.on_callback_query()
 async def callback_query_handler(client, query: CallbackQuery):
-    # Ignore index-related callbacks FIRST (most specific patterns)
-    if query.data.startswith("idx_ch_"):
-        # This is handled in index.py
-        return
-    if query.data.startswith("idx"):
-        # This is handled in index.py
+    # Skip index-related callbacks - they are handled in index.py with specific filters
+    if query.data.startswith("idx_"):
         return
     
     try:
