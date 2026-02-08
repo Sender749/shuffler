@@ -31,9 +31,9 @@ VERIFY_EXPIRE_TIME = int(os.getenv("VERIFY_EXPIRE_TIME", "300"))  # 6 hours in s
 RESET_DAILY = True
 PREMIUM_BYPASS = True
 VERIFY_STAGES = {
-    1: 12 * 60 * 60,    # 12 hours
-    2: 24 * 60 * 60,    # 1 day
-    3: 72 * 60 * 60    # 3 days
+    1: 5 * 60,    # 12 hours
+    2: 5 * 60,    # 1 day
+    3: 5 * 60     # 3 days 6 * 60 * 60 
 }
 VERIFY_TOKEN_EXPIRY = 10 * 60 
 # Three Shortlink APIs for verification
