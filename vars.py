@@ -26,7 +26,7 @@ PROTECT_CONTENT  = bool(os.environ.get("PROTECT_CONTENT ", True))
 
 # Verification Settings
 IS_VERIFY = os.environ.get("IS_VERIFY", "True").lower() in ["true", "yes", "1", "enable"]
-FREE_DAILY_LIMIT = int(os.getenv("FREE_DAILY_LIMIT", "3"))  # Free videos before verification
+FREE_VIDEOS_COUNT = int(os.getenv("FREE_DAILY_LIMIT", "3"))  # Free videos before verification
 VERIFY_EXPIRE_TIME = int(os.getenv("VERIFY_EXPIRE_TIME", "300"))  # 6 hours in seconds 21600
 RESET_DAILY = True
 PREMIUM_BYPASS = True
