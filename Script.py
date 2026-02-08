@@ -66,6 +66,8 @@ All payments are <b>non-refundable</b>, so please review your choice carefully b
 
 » /banlist — To check banned Users.
 
+» /index — Index Manualy.
+
 » /stats — View detailed bot statistics.</b>"""
   
   HELP = """<b>𝖡𝗈𝗍 𝖣𝗂𝗌𝖼𝗅𝖺𝗂𝗆𝖾𝗋 & 𝖴𝗌𝖺𝗀𝖾 𝖦𝗎𝗂𝖽𝖾:</b>
