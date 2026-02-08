@@ -1,5 +1,5 @@
 from pyrogram import Client, filters
-from vars import ADMIN_ID, ADMIN_USERNAME, IS_FSUB
+from vars import ADMIN_ID, ADMIN_USERNAME, IS_FSUB, IS_VERIFY
 from pyrogram.types import *
 from Database.userdb import udb
 from .fsub import get_fsub
