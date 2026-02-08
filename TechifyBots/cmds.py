@@ -422,12 +422,8 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
                 verify_msg = "<b>✅ First Verification Active!</b>"
             
             caption_text = (
-                f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>
-
-"
-                f"{verify_msg}
-
-"
+                f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>"
+                f"{verify_msg}"
                 f"<i>Enjoy unlimited videos until verification expires!</i>"
             )
             
@@ -471,17 +467,10 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         from TechifyBots.verify_utils import format_time_remaining
         
         msg_text = (
-            f"<b>🔐 Verification Required (3/3)</b>
-
-"
-            f"<b>Second verification expired!</b>
-
-"
-            f"<b>Complete final verification to continue.</b>
-
-"
-            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[3])}</b>
-"
+            f"<b>🔐 Verification Required (3/3)</b>"
+            f"<b>Second verification expired!</b>"
+            f"<b>Complete final verification to continue.</b>"
+            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[3])}</b>"
             f"<b>💎 Premium users skip verification!</b>"
         )
         
@@ -505,17 +494,10 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         from TechifyBots.verify_utils import format_time_remaining
         
         msg_text = (
-            f"<b>🔐 Verification Required (2/3)</b>
-
-"
-            f"<b>First verification expired!</b>
-
-"
-            f"<b>Complete 2nd verification to continue.</b>
-
-"
-            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[2])}</b>
-"
+            f"<b>🔐 Verification Required (2/3)</b>"
+            f"<b>First verification expired!</b>"
+            f"<b>Complete 2nd verification to continue.</b>"
+            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[2])}</b>"
             f"<b>💎 Premium users skip verification!</b>"
         )
         
@@ -539,17 +521,10 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         from TechifyBots.verify_utils import format_time_remaining
         
         msg_text = (
-            f"<b>🔐 Verification Required (1/3)</b>
-
-"
-            f"<b>You've used your {FREE_VIDEOS_COUNT} free videos!</b>
-
-"
-            f"<b>Complete verification for unlimited access.</b>
-
-"
-            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[1])}</b>
-"
+            f"<b>🔐 Verification Required (1/3)</b>"
+            f"<b>You've used your {FREE_VIDEOS_COUNT} free videos!</b>"
+            f"<b>Complete verification for unlimited access.</b>"
+            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[1])}</b>"
             f"<b>💎 Premium users skip verification!</b>"
         )
         
@@ -572,3 +547,4 @@ async def send_random_video(client: Client, message: Message):
         chat_id=message.chat.id,
         reply_func=message.reply_text
     )
+
