@@ -278,19 +278,39 @@ async def start_indexing(client: Client, user_id: int, channel_id: int, start_ms
     
     await index_channel(client, user_id, channel_id, start_msg_id, status_msg)
 
+
 async def index_channel(client: Client, user_id: int, channel_id: int, start_msg_id: int, status_msg: Message):
-    """Index videos from the database channel"""
+    """Index videos from the database channel using get_messages (bot-compatible)"""
     saved = skipped = duplicates = errors = 0
     start_time = time.time()
     last_update = 0
     
     async with lock:
         try:
-            print(f"Starting iteration - Channel: {channel_id}, Offset: {start_msg_id}")
+            print(f"[INDEX-PROCESS] Starting indexing - Channel: {channel_id}, Start ID: {start_msg_id}")
             
-            # Iterate through messages using get_chat_history
-            async for msg in client.get_chat_history(channel_id, offset_id=start_msg_id if start_msg_id > 0 else 0):
-                
+            # Get the latest message ID if starting from 0
+            if start_msg_id == 0:
+                try:
+                    recent_msgs = await client.get_messages(channel_id, limit=1)
+                    if recent_msgs:
+                        start_msg_id = recent_msgs[0].id if isinstance(recent_msgs, list) else recent_msgs.id
+                        print(f"[INDEX-PROCESS] Auto-detected latest message ID: {start_msg_id}")
+                    else:
+                        await status_msg.edit_text("❌ **No messages found in channel**")
+                        return
+                except Exception as e:
+                    print(f"[INDEX-PROCESS] Error getting latest message: {e}")
+                    await status_msg.edit_text(f"❌ **Error accessing channel:** `{str(e)}`")
+                    return
+            
+            # Iterate backwards from start_msg_id
+            current_msg_id = start_msg_id
+            batch_size = 100
+            consecutive_empty_batches = 0
+            max_empty_batches = 3
+            
+            while current_msg_id > 0 and consecutive_empty_batches < max_empty_batches:
                 # Check for cancellation
                 if CANCEL_INDEX.get(user_id, False):
                     CANCEL_INDEX[user_id] = False
@@ -304,73 +324,109 @@ async def index_channel(client: Client, user_id: int, channel_id: int, start_msg
                     )
                     return
                 
-                # Skip if we're starting from a specific message and haven't reached it yet
-                if start_msg_id > 0 and msg.id < start_msg_id:
-                    continue
-                
-                # Only process media messages (video, photo, document, animation)
-                if not (msg.video or msg.photo or msg.document or msg.animation):
-                    skipped += 1
-                    continue
-                
                 try:
-                    video_id = msg.id
+                    # Create message ID range for this batch
+                    start_id = max(1, current_msg_id - batch_size + 1)
+                    msg_ids = list(range(start_id, current_msg_id + 1))
                     
-                    # Determine duration based on media type
-                    if msg.video:
-                        duration = msg.video.duration
-                    elif msg.animation:
-                        duration = msg.animation.duration if msg.animation.duration else 0
-                    elif msg.document and msg.document.mime_type and 'video' in msg.document.mime_type:
-                        duration = msg.document.duration if msg.document.duration else 0
-                    else:
-                        duration = 0
+                    print(f"[INDEX-PROCESS] Fetching batch: {start_id} to {current_msg_id}")
                     
-                    is_premium = duration > FREE_VIDEO_DURATION
+                    # Get messages
+                    messages = await client.get_messages(channel_id, msg_ids)
                     
-                    # Check if already exists (duplicate check)
-                    existing = await mdb.async_video_collection.find_one({"video_id": video_id})
-                    if existing:
-                        duplicates += 1
+                    # Handle both single message and list of messages
+                    if not isinstance(messages, list):
+                        messages = [messages] if messages else []
+                    
+                    # Filter out None messages
+                    valid_messages = [msg for msg in messages if msg is not None]
+                    
+                    if not valid_messages:
+                        print(f"[INDEX-PROCESS] Empty batch at {current_msg_id}, incrementing counter")
+                        consecutive_empty_batches += 1
+                        current_msg_id = start_id - 1
                         continue
                     
-                    # Save the video
-                    await mdb.save_video_id(video_id, duration, is_premium)
-                    saved += 1
+                    # Reset empty batch counter
+                    consecutive_empty_batches = 0
+                    
+                    # Process each message
+                    for msg in valid_messages:
+                        # Only process media messages
+                        if not (msg.video or msg.photo or msg.document or msg.animation):
+                            skipped += 1
+                            continue
+                        
+                        try:
+                            video_id = msg.id
+                            
+                            # Determine duration
+                            if msg.video:
+                                duration = msg.video.duration
+                            elif msg.animation:
+                                duration = msg.animation.duration if msg.animation.duration else 0
+                            elif msg.document and msg.document.mime_type and 'video' in msg.document.mime_type:
+                                duration = msg.document.duration if msg.document.duration else 0
+                            else:
+                                duration = 0
+                            
+                            is_premium = duration > FREE_VIDEO_DURATION
+                            
+                            # Check for duplicates
+                            existing = await mdb.async_video_collection.find_one({"video_id": video_id})
+                            if existing:
+                                duplicates += 1
+                                continue
+                            
+                            # Save video
+                            await mdb.save_video_id(video_id, duration, is_premium)
+                            saved += 1
+                            print(f"[INDEX-PROCESS] Saved video ID {video_id} (duration: {duration}s, premium: {is_premium})")
+                            
+                        except FloodWait as e:
+                            print(f"[INDEX-PROCESS] FloodWait: {e.value}s")
+                            await asyncio.sleep(e.value)
+                        except Exception as e:
+                            print(f"[INDEX-PROCESS] Error saving video {msg.id}: {e}")
+                            errors += 1
+                    
+                    # Move to next batch
+                    current_msg_id = start_id - 1
+                    
+                    # Update status
+                    current_time = time.time()
+                    if (current_time - last_update) >= 5:
+                        last_update = current_time
+                        try:
+                            await status_msg.edit_text(
+                                f"📊 **Indexing in Progress...**\n\n"
+                                f"✅ Saved: `{saved}`\n"
+                                f"⏭️ Skipped: `{skipped}`\n"
+                                f"🔁 Duplicates: `{duplicates}`\n"
+                                f"❌ Errors: `{errors}`\n"
+                                f"📍 Current ID: `{current_msg_id}`\n\n"
+                                f"⏱️ Time: `{int(current_time - start_time)}s`",
+                                reply_markup=InlineKeyboardMarkup([[
+                                    InlineKeyboardButton("❌ Cancel", callback_data="idx_cancel")
+                                ]])
+                            )
+                        except MessageNotModified:
+                            pass
+                        except Exception as e:
+                            print(f"[INDEX-PROCESS] Error updating status: {e}")
                     
                 except FloodWait as e:
-                    print(f"FloodWait: {e.value}s")
+                    print(f"[INDEX-PROCESS] FloodWait in batch: {e.value}s")
                     await asyncio.sleep(e.value)
                 except Exception as e:
-                    print(f"Error saving video {msg.id}: {e}")
+                    print(f"[INDEX-PROCESS] Error in batch: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    current_msg_id = max(1, current_msg_id - batch_size) - 1
                     errors += 1
-                
-                # Update status every 5 seconds or every 50 messages
-                current_time = time.time()
-                if (current_time - last_update) >= 5 or (saved + skipped + duplicates) % 50 == 0:
-                    last_update = current_time
-                    try:
-                        await status_msg.edit_text(
-                            f"📊 **Indexing in Progress...**\n\n"
-                            f"✅ Saved: `{saved}`\n"
-                            f"⏭️ Skipped: `{skipped}`\n"
-                            f"🔁 Duplicates: `{duplicates}`\n"
-                            f"❌ Errors: `{errors}`\n\n"
-                            f"⏱️ Time: `{int(current_time - start_time)}s`",
-                            reply_markup=InlineKeyboardMarkup([[
-                                InlineKeyboardButton("❌ Cancel", callback_data="idx_cancel")
-                            ]])
-                        )
-                    except MessageNotModified:
-                        pass
-                    except Exception as e:
-                        print(f"Error updating status: {e}")
         
-        except FloodWait as e:
-            print(f"FloodWait in main loop: {e.value}s")
-            await asyncio.sleep(e.value)
         except Exception as e:
-            print(f"Indexing error: {e}")
+            print(f"[INDEX-PROCESS] Fatal indexing error: {e}")
             import traceback
             traceback.print_exc()
             await status_msg.edit_text(
@@ -386,6 +442,8 @@ async def index_channel(client: Client, user_id: int, channel_id: int, start_msg
     
     # Final success message
     elapsed = round(time.time() - start_time, 2)
+    
+    print(f"[INDEX-PROCESS] Indexing complete! Saved: {saved}, Skipped: {skipped}, Duplicates: {duplicates}, Errors: {errors}")
     
     await status_msg.edit_text(
         f"✅ **Indexing Completed Successfully!**\n\n"
