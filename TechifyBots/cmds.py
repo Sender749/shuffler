@@ -1,6 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.types import *
-from pyrogram.errors import MessageNotModified
+from pyrogram.errors import MessageNotModified, MessageEmpty, MessageIdInvalid
 from vars import *
 from Database.maindb import mdb
 from Database.userdb import udb
@@ -126,6 +126,26 @@ async def handle_verification(client: Client, message: Message, data: str):
         traceback.print_exc()
         await message.reply("**⚠️ Verification failed! Please try again.**")
 
+async def safe_copy_message(client, chat_id, from_chat_id, message_id, caption, protect_content, reply_markup):
+    """Safely copy a message with error handling for empty/deleted messages"""
+    try:
+        return await client.copy_message(
+            chat_id=chat_id,
+            from_chat_id=from_chat_id,
+            message_id=message_id,
+            caption=caption,
+            protect_content=protect_content,
+            reply_markup=reply_markup
+        )
+    except MessageEmpty:
+        print(f"ERROR: Message {message_id} in channel {from_chat_id} is empty or doesn't exist")
+        # Mark this video as invalid in the database
+        await mdb.mark_video_as_invalid(message_id)
+        raise Exception("Video file not found. It may have been deleted from the database channel.")
+    except Exception as e:
+        print(f"ERROR copying message {message_id}: {e}")
+        raise
+
 async def send_random_video_logic(client: Client, user, chat_id, reply_func, edit_message=None):
     from .verify_utils import encode_string, get_shortlink
     import pytz
@@ -157,20 +177,31 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         try:
             caption_text = ("<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n")
             
-            # Use edit_message if available (for smooth UX)
+            # Delete old message if exists
             if edit_message:
                 try:
                     await edit_message.delete()
                 except:
                     pass
-                    
-            dy = await client.copy_message(
+            
+            # Try to copy the message with error handling
+            try:
+                dy = await safe_copy_message(
+                    client=client,
                     chat_id=chat_id,
                     from_chat_id=DATABASE_CHANNEL_ID,
                     message_id=random_video["video_id"],
                     caption=caption_text,
                     protect_content=PROTECT_CONTENT,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]])
+                )
+            except Exception as copy_error:
+                # If the video file is invalid, try to get another one
+                print(f"Failed to copy video, trying another: {copy_error}")
+                await reply_func(f"**⚠️ Error: {str(copy_error)}\n\nTrying another video...**")
+                # Recursively try with another video
+                await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
+                return
             
             # Cache the message for future edits
             VIDEO_MSG_CACHE[user_id] = dy
@@ -179,15 +210,19 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             await asyncio.sleep(300)
             try:
                 await dy.delete()
+                VIDEO_MSG_CACHE.pop(user_id, None)
             except:
                 pass
         except Exception as e:
             print(f"Error sending video: {e}")
+            import traceback
+            traceback.print_exc()
             await reply_func("Failed to send video..")
         return
     
     # Free users - Check verification system
     if not IS_VERIFY:
+        # Old free user flow without verification
         videos = await mdb.get_free_videos()
         if not videos:
             await reply_func("No videos available at the moment.")
@@ -198,25 +233,39 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         if daily_count >= daily_limit:
             await reply_func(
                 f"**🚫 You've reached your daily limit of {daily_limit} videos.\n\n"
-                f">Limit will reset every day at 5 AM (IST).**"
+                f">Limit will reset every day at 5 AM (IST).**",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🍿 Buy Subscription 🍾", callback_data="pro")]])
             )
             return
         try:
-            caption_text = ("<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n")
+            caption_text = (
+                f"<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n"
+                f"<b>🆓 Free Video</b>\n\n"
+                f"<b>📊 Today Used: {daily_count + 1}/{daily_limit}</b>\n"
+                f"<b>📝 Remaining Videos: {daily_limit - daily_count - 1}</b>"
+            )
             
             if edit_message:
                 try:
                     await edit_message.delete()
                 except:
                     pass
-                    
-            dy = await client.copy_message(
+            
+            try:
+                dy = await safe_copy_message(
+                    client=client,
                     chat_id=chat_id,
                     from_chat_id=DATABASE_CHANNEL_ID,
                     message_id=random_video["video_id"],
                     caption=caption_text,
                     protect_content=PROTECT_CONTENT,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]])
+                )
+            except Exception as copy_error:
+                print(f"Failed to copy video, trying another: {copy_error}")
+                await reply_func(f"**⚠️ Error: {str(copy_error)}\n\nTrying another video...**")
+                await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
+                return
             
             VIDEO_MSG_CACHE[user_id] = dy
             
@@ -224,6 +273,7 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             await asyncio.sleep(300)
             try:
                 await dy.delete()
+                VIDEO_MSG_CACHE.pop(user_id, None)
             except:
                 pass
         except Exception as e:
@@ -231,10 +281,10 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             await reply_func("Failed to send video..")
         return
     
-    # VERIFICATION ENABLED - Free users
+    # Verification-based free user flow
     free_trial_count = db_user.get("free_trial_count", 0)
     
-    # Check if user gets free trial videos
+    # Allow first 3 free videos without verification
     if free_trial_count < FREE_VIDEOS_COUNT:
         videos = await mdb.get_free_videos()
         if not videos:
@@ -256,14 +306,22 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
                     await edit_message.delete()
                 except:
                     pass
-                    
-            dy = await client.copy_message(
+            
+            try:
+                dy = await safe_copy_message(
+                    client=client,
                     chat_id=chat_id,
                     from_chat_id=DATABASE_CHANNEL_ID,
                     message_id=random_video["video_id"],
                     caption=caption_text,
                     protect_content=PROTECT_CONTENT,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]])
+                )
+            except Exception as copy_error:
+                print(f"Failed to copy video, trying another: {copy_error}")
+                await reply_func(f"**⚠️ Error: {str(copy_error)}\n\nTrying another video...**")
+                await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
+                return
             
             VIDEO_MSG_CACHE[user_id] = dy
             
@@ -271,10 +329,13 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             await asyncio.sleep(300)
             try:
                 await dy.delete()
+                VIDEO_MSG_CACHE.pop(user_id, None)
             except:
                 pass
         except Exception as e:
             print(f"Error sending video: {e}")
+            import traceback
+            traceback.print_exc()
             await reply_func("Failed to send video..")
         return
     
@@ -309,8 +370,9 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         if edit_message:
             try:
                 await edit_message.edit_text(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
-            except MessageNotModified:
-                pass
+            except (MessageNotModified, MessageIdInvalid):
+                # If edit fails, send new message
+                await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         else:
             await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         return
@@ -340,8 +402,8 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         if edit_message:
             try:
                 await edit_message.edit_text(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
-            except MessageNotModified:
-                pass
+            except (MessageNotModified, MessageIdInvalid):
+                await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         else:
             await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         return
@@ -371,8 +433,8 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         if edit_message:
             try:
                 await edit_message.edit_text(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
-            except MessageNotModified:
-                pass
+            except (MessageNotModified, MessageIdInvalid):
+                await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         else:
             await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         return
@@ -396,24 +458,35 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
                 await edit_message.delete()
             except:
                 pass
-                
-        dy = await client.copy_message(
+        
+        try:
+            dy = await safe_copy_message(
+                client=client,
                 chat_id=chat_id,
                 from_chat_id=DATABASE_CHANNEL_ID,
                 message_id=random_video["video_id"],
                 caption=caption_text,
                 protect_content=PROTECT_CONTENT,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]])
+            )
+        except Exception as copy_error:
+            print(f"Failed to copy video, trying another: {copy_error}")
+            await reply_func(f"**⚠️ Error: {str(copy_error)}\n\nTrying another video...**")
+            await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
+            return
         
         VIDEO_MSG_CACHE[user_id] = dy
         
         await asyncio.sleep(300)
         try:
             await dy.delete()
+            VIDEO_MSG_CACHE.pop(user_id, None)
         except:
             pass
     except Exception as e:
         print(f"Error sending video: {e}")
+        import traceback
+        traceback.print_exc()
         await reply_func("Failed to send video..")
 
 @Client.on_message(filters.command("getvideos") & filters.private)
