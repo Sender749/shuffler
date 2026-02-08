@@ -1,5 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.types import *
+from pyrogram.errors import MessageNotModified
 from vars import *
 from Database.maindb import mdb
 from Database.userdb import udb
@@ -7,6 +8,9 @@ from datetime import datetime
 import pytz, random, asyncio
 from .fsub import get_fsub
 from Script import text
+
+# Video message cache (user_id: message object)
+VIDEO_MSG_CACHE = {}
 
 async def get_updated_limits():
         global FREE_LIMIT, PRIME_LIMIT
@@ -54,7 +58,7 @@ async def start_command(client, message):
 
 async def handle_verification(client: Client, message: Message, data: str):
     """Handle verification callback when user clicks verify link"""
-    from zoneinfo import ZoneInfo
+    import pytz
     
     try:
         parts = data.split("_")
@@ -75,21 +79,21 @@ async def handle_verification(client: Client, message: Message, data: str):
             await message.reply("**⚠️ This verification link has already been used!**")
             return
         
-        IST = ZoneInfo("Asia/Kolkata")
-        current_time = datetime.now(IST)
+        ist_timezone = pytz.timezone('Asia/Kolkata')
+        current_time = datetime.now(tz=ist_timezone)
         
         if verify_type == "verify":
             await mdb.update_user(verify_user_id, {"last_verified": current_time})
             verify_num = 1
-            msg_text = "**✅ First Verification Complete!**\n\n<b>You can now access unlimited videos for the next 6 hours!</b>\n\n<i>After 6 hours, you'll need to complete the second verification.</i>"
+            msg_text = "**✅ First Verification Complete!**\n\n<b>You can now access unlimited videos until midnight (IST)!</b>\n\n<i>After the first timer expires, you'll need to complete the second verification.</i>"
         elif verify_type == "verify2":
             await mdb.update_user(verify_user_id, {"second_time_verified": current_time})
             verify_num = 2
-            msg_text = "**✅ Second Verification Complete!**\n\n<b>You can now access unlimited videos for the next 6 hours!</b>\n\n<i>After 6 hours, you'll need to complete the third verification.</i>"
+            msg_text = "**✅ Second Verification Complete!**\n\n<b>You can now access unlimited videos until midnight (IST)!</b>\n\n<i>After the second timer expires, you'll need to complete the third verification.</i>"
         elif verify_type == "verify3":
             await mdb.update_user(verify_user_id, {"third_time_verified": current_time})
             verify_num = 3
-            msg_text = "**✅ Third Verification Complete!**\n\n<b>You can now access unlimited videos for the next 6 hours!</b>\n\n<i>This is the final verification for today!</i>"
+            msg_text = "**✅ Third Verification Complete!**\n\n<b>You can now access unlimited videos until midnight (IST)!</b>\n\n<i>This is the final verification for today!</i>"
         else:
             await message.reply("**⚠️ Invalid verification type!**")
             return
@@ -118,11 +122,13 @@ async def handle_verification(client: Client, message: Message, data: str):
     
     except Exception as e:
         print(f"Verification error: {e}")
+        import traceback
+        traceback.print_exc()
         await message.reply("**⚠️ Verification failed! Please try again.**")
 
-async def send_random_video_logic(client: Client, user, chat_id, reply_func):
-    from .verify_utils import encode_string, get_shortlink, format_time_remaining
-    from zoneinfo import ZoneInfo
+async def send_random_video_logic(client: Client, user, chat_id, reply_func, edit_message=None):
+    from .verify_utils import encode_string, get_shortlink
+    import pytz
     
     limits = await get_updated_limits()
     if limits.get('maintenance', False):
@@ -150,6 +156,14 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
             return
         try:
             caption_text = ("<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n")
+            
+            # Use edit_message if available (for smooth UX)
+            if edit_message:
+                try:
+                    await edit_message.delete()
+                except:
+                    pass
+                    
             dy = await client.copy_message(
                     chat_id=chat_id,
                     from_chat_id=DATABASE_CHANNEL_ID,
@@ -157,9 +171,16 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
                     caption=caption_text,
                     protect_content=PROTECT_CONTENT,
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
+            
+            # Cache the message for future edits
+            VIDEO_MSG_CACHE[user_id] = dy
+            
             await mdb.increment_daily_count(user_id)
             await asyncio.sleep(300)
-            await dy.delete()
+            try:
+                await dy.delete()
+            except:
+                pass
         except Exception as e:
             print(f"Error sending video: {e}")
             await reply_func("Failed to send video..")
@@ -182,6 +203,13 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
             return
         try:
             caption_text = ("<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n")
+            
+            if edit_message:
+                try:
+                    await edit_message.delete()
+                except:
+                    pass
+                    
             dy = await client.copy_message(
                     chat_id=chat_id,
                     from_chat_id=DATABASE_CHANNEL_ID,
@@ -189,9 +217,15 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
                     caption=caption_text,
                     protect_content=PROTECT_CONTENT,
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
+            
+            VIDEO_MSG_CACHE[user_id] = dy
+            
             await mdb.increment_daily_count(user_id)
             await asyncio.sleep(300)
-            await dy.delete()
+            try:
+                await dy.delete()
+            except:
+                pass
         except Exception as e:
             print(f"Error sending video: {e}")
             await reply_func("Failed to send video..")
@@ -216,6 +250,13 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
                 f"<b>📝 Remaining Free Videos: {remaining}</b>\n\n"
                 f"<i>After {FREE_VIDEOS_COUNT} free videos, you'll need to verify to continue!</i>"
             )
+            
+            if edit_message:
+                try:
+                    await edit_message.delete()
+                except:
+                    pass
+                    
             dy = await client.copy_message(
                     chat_id=chat_id,
                     from_chat_id=DATABASE_CHANNEL_ID,
@@ -223,60 +264,28 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
                     caption=caption_text,
                     protect_content=PROTECT_CONTENT,
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
+            
+            VIDEO_MSG_CACHE[user_id] = dy
+            
             await mdb.increment_free_trial_count(user_id)
             await asyncio.sleep(300)
-            await dy.delete()
+            try:
+                await dy.delete()
+            except:
+                pass
         except Exception as e:
             print(f"Error sending video: {e}")
             await reply_func("Failed to send video..")
         return
     
-    # Free trial exhausted - Need verification
-    IST = ZoneInfo("Asia/Kolkata")
-    current_time = datetime.now(IST)
+    # Free trial exhausted - Check verification status
+    user_verified = await mdb.is_user_verified(user_id)
+    is_second_shortener = await mdb.use_second_shortener(user_id, VERIFY_EXPIRE_TIME)
+    is_third_shortener = await mdb.use_third_shortener(user_id, VERIFY_EXPIRE_TIME)
     
-    is_first_verified = await mdb.is_user_verified(user_id)
-    is_second_verified = await mdb.is_second_verified(user_id)
-    is_third_verified = await mdb.is_third_verified(user_id)
-    
-    # All verifications valid - Send video
-    if is_first_verified and is_second_verified and is_third_verified:
-        videos = await mdb.get_free_videos()
-        if not videos:
-            await reply_func("No videos available at the moment.")
-            return
-        random_video = random.choice(videos)
-        
-        third_time = db_user.get("third_time_verified")
-        if third_time.tzinfo is None:
-            third_time = third_time.replace(tzinfo=IST)
-        else:
-            third_time = third_time.astimezone(IST)
-        time_remaining = VERIFY_EXPIRE_TIME - (current_time - third_time).total_seconds()
-        
-        try:
-            caption_text = (
-                f"<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n"
-                f"<b>✅ All Verifications Complete!</b>\n"
-                f"<b>⏰ Time Remaining: {format_time_remaining(time_remaining)}</b>\n\n"
-                f"<i>Enjoy unlimited videos until next verification!</i>"
-            )
-            dy = await client.copy_message(
-                    chat_id=chat_id,
-                    from_chat_id=DATABASE_CHANNEL_ID,
-                    message_id=random_video["video_id"],
-                    caption=caption_text,
-                    protect_content=PROTECT_CONTENT,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
-            await asyncio.sleep(300)
-            await dy.delete()
-        except Exception as e:
-            print(f"Error sending video: {e}")
-            await reply_func("Failed to send video..")
-        return
-    
-    # Need to verify - Determine which verification
-    if not is_first_verified:
+    # Determine which verification to show
+    if not user_verified:
+        # Need first verification
         verify_hash = encode_string(f"verify_{user_id}_{random.randint(1000, 9999)}")
         await mdb.create_verify_id(user_id, verify_hash)
         
@@ -288,19 +297,26 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
             [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL1)]
         ]
         
-        await reply_func(
+        msg_text = (
             f"<b>🔐 Verification Required (1/3)</b>\n\n"
             f"<b>You've used your {FREE_VIDEOS_COUNT} free videos for today!</b>\n\n"
-            f"<b>To continue watching unlimited videos for the next 6 hours, please complete the verification.</b>\n\n"
-            f"<b>⏰ Verification Validity: 6 Hours</b>\n"
+            f"<b>To continue watching unlimited videos, please complete the verification.</b>\n\n"
+            f"<b>⏰ Verification valid until midnight (IST)</b>\n"
             f"<b>💎 Premium users don't need verification!</b>\n\n"
-            f"<i>Click the button below to verify:</i>",
-            reply_markup=InlineKeyboardMarkup(btn),
-            disable_web_page_preview=True
+            f"<i>Click the button below to verify:</i>"
         )
+        
+        if edit_message:
+            try:
+                await edit_message.edit_text(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
+            except MessageNotModified:
+                pass
+        else:
+            await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         return
-    
-    if is_first_verified and not is_second_verified and await mdb.need_second_verification(user_id):
+        
+    elif user_verified and is_second_shortener:
+        # Need second verification
         verify_hash = encode_string(f"verify2_{user_id}_{random.randint(1000, 9999)}")
         await mdb.create_verify_id(user_id, verify_hash)
         
@@ -312,19 +328,26 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
             [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL2)]
         ]
         
-        await reply_func(
+        msg_text = (
             f"<b>🔐 Verification Required (2/3)</b>\n\n"
             f"<b>Your first verification has expired!</b>\n\n"
-            f"<b>To continue watching unlimited videos for the next 6 hours, please complete the second verification.</b>\n\n"
-            f"<b>⏰ Verification Validity: 6 Hours</b>\n"
+            f"<b>To continue watching unlimited videos, please complete the second verification.</b>\n\n"
+            f"<b>⏰ Verification valid until midnight (IST)</b>\n"
             f"<b>💎 Premium users don't need verification!</b>\n\n"
-            f"<i>Click the button below to verify:</i>",
-            reply_markup=InlineKeyboardMarkup(btn),
-            disable_web_page_preview=True
+            f"<i>Click the button below to verify:</i>"
         )
+        
+        if edit_message:
+            try:
+                await edit_message.edit_text(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
+            except MessageNotModified:
+                pass
+        else:
+            await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         return
-    
-    if is_first_verified and is_second_verified and not is_third_verified and await mdb.need_third_verification(user_id):
+        
+    elif user_verified and is_third_shortener:
+        # Need third verification
         verify_hash = encode_string(f"verify3_{user_id}_{random.randint(1000, 9999)}")
         await mdb.create_verify_id(user_id, verify_hash)
         
@@ -336,88 +359,62 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func):
             [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL3)]
         ]
         
-        await reply_func(
+        msg_text = (
             f"<b>🔐 Verification Required (3/3)</b>\n\n"
             f"<b>Your second verification has expired!</b>\n\n"
-            f"<b>To continue watching unlimited videos for the next 6 hours, please complete the third verification.</b>\n\n"
-            f"<b>⏰ Verification Validity: 6 Hours</b>\n"
+            f"<b>To continue watching unlimited videos, please complete the third verification.</b>\n\n"
+            f"<b>⏰ Verification valid until midnight (IST)</b>\n"
             f"<b>💎 Premium users don't need verification!</b>\n\n"
-            f"<i>Click the button below to verify:</i>",
-            reply_markup=InlineKeyboardMarkup(btn),
-            disable_web_page_preview=True
+            f"<i>Click the button below to verify:</i>"
         )
+        
+        if edit_message:
+            try:
+                await edit_message.edit_text(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
+            except MessageNotModified:
+                pass
+        else:
+            await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         return
     
-    # If user is between verification states
-    if is_first_verified and not await mdb.need_second_verification(user_id):
-        videos = await mdb.get_free_videos()
-        if not videos:
-            await reply_func("No videos available at the moment.")
-            return
-        random_video = random.choice(videos)
-        
-        last_time = db_user.get("last_verified")
-        if last_time.tzinfo is None:
-            last_time = last_time.replace(tzinfo=IST)
-        else:
-            last_time = last_time.astimezone(IST)
-        time_remaining = VERIFY_EXPIRE_TIME - (current_time - last_time).total_seconds()
-        
-        try:
-            caption_text = (
-                f"<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n"
-                f"<b>✅ Verification Active (1/3)</b>\n"
-                f"<b>⏰ Time Remaining: {format_time_remaining(time_remaining)}</b>\n\n"
-                f"<i>Enjoy unlimited videos!</i>"
-            )
-            dy = await client.copy_message(
-                    chat_id=chat_id,
-                    from_chat_id=DATABASE_CHANNEL_ID,
-                    message_id=random_video["video_id"],
-                    caption=caption_text,
-                    protect_content=PROTECT_CONTENT,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
-            await asyncio.sleep(300)
-            await dy.delete()
-        except Exception as e:
-            print(f"Error sending video: {e}")
-            await reply_func("Failed to send video..")
+    # User is verified, send video
+    videos = await mdb.get_free_videos()
+    if not videos:
+        await reply_func("No videos available at the moment.")
         return
+    random_video = random.choice(videos)
     
-    if is_first_verified and is_second_verified and not await mdb.need_third_verification(user_id):
-        videos = await mdb.get_free_videos()
-        if not videos:
-            await reply_func("No videos available at the moment.")
-            return
-        random_video = random.choice(videos)
+    try:
+        caption_text = (
+            f"<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n"
+            f"<b>✅ Verification Active!</b>\n\n"
+            f"<i>Enjoy unlimited videos until midnight!</i>"
+        )
         
-        second_time = db_user.get("second_time_verified")
-        if second_time.tzinfo is None:
-            second_time = second_time.replace(tzinfo=IST)
-        else:
-            second_time = second_time.astimezone(IST)
-        time_remaining = VERIFY_EXPIRE_TIME - (current_time - second_time).total_seconds()
+        if edit_message:
+            try:
+                await edit_message.delete()
+            except:
+                pass
+                
+        dy = await client.copy_message(
+                chat_id=chat_id,
+                from_chat_id=DATABASE_CHANNEL_ID,
+                message_id=random_video["video_id"],
+                caption=caption_text,
+                protect_content=PROTECT_CONTENT,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
         
+        VIDEO_MSG_CACHE[user_id] = dy
+        
+        await asyncio.sleep(300)
         try:
-            caption_text = (
-                f"<b><blockquote>⚠️ This file will auto delete in 5 minutes!</blockquote></b>\n\n"
-                f"<b>✅ Verification Active (2/3)</b>\n"
-                f"<b>⏰ Time Remaining: {format_time_remaining(time_remaining)}</b>\n\n"
-                f"<i>Enjoy unlimited videos!</i>"
-            )
-            dy = await client.copy_message(
-                    chat_id=chat_id,
-                    from_chat_id=DATABASE_CHANNEL_ID,
-                    message_id=random_video["video_id"],
-                    caption=caption_text,
-                    protect_content=PROTECT_CONTENT,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Again", callback_data="getvideos_cb")]]))
-            await asyncio.sleep(300)
             await dy.delete()
-        except Exception as e:
-            print(f"Error sending video: {e}")
-            await reply_func("Failed to send video..")
-        return
+        except:
+            pass
+    except Exception as e:
+        print(f"Error sending video: {e}")
+        await reply_func("Failed to send video..")
 
 @Client.on_message(filters.command("getvideos") & filters.private)
 async def send_random_video(client: Client, message: Message):
