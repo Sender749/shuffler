@@ -37,7 +37,7 @@ VERIFY_STAGES = {
 }
 VERIFY_TOKEN_EXPIRY = 10 * 60 
 # Three Shortlink APIs for verification
-SHORTENER_API1 = os.getenv("SHORTENER_API1", "fb4812435a09dcca63276a47da3c8ac5c23239ef")
+SHORTENER_API1 = os.getenv("SHORTENER_API1", "7ef9ed640db12a292b7c33f43922ded1feef2ddb")
 SHORTENER_WEBSITE1 = os.getenv("SHORTENER_WEBSITE1", "instantlinks.co")
 TUTORIAL1 = os.getenv("TUTORIAL1", "https://t.me/Navexdisscussion/33")
 
@@ -45,7 +45,7 @@ SHORTENER_API2 = os.getenv("SHORTENER_API2", "fb4812435a09dcca63276a47da3c8ac5c2
 SHORTENER_WEBSITE2 = os.getenv("SHORTENER_WEBSITE2", "instantlinks.co")
 TUTORIAL2 = os.getenv("TUTORIAL2", "https://t.me/Navexdisscussion/33")
 
-SHORTENER_API3 = os.getenv("SHORTENER_API3", "fb4812435a09dcca63276a47da3c8ac5c23239ef")
+SHORTENER_API3 = os.getenv("SHORTENER_API3", "bbe02c66b042f605c13ca910a0981014cf02e381")
 SHORTENER_WEBSITE3 = os.getenv("SHORTENER_WEBSITE3", "instantlinks.co")
 TUTORIAL3 = os.getenv("TUTORIAL3", "https://t.me/Navexdisscussion/33")
 
