@@ -1,11 +1,12 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from vars import MONGO_URI, VERIFY_EXPIRE_TIME
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import asyncio
 from itertools import count
 from bot import bot
 from zoneinfo import ZoneInfo
 import pytz
+import time, secrets
 
 class Database:
     def __init__(self):
@@ -208,7 +209,6 @@ class Database:
         )
 
 # Video index Codes:
-
     async def save_video_id(self, video_id: int, duration: int, is_premium: bool = False):
         video_data = {
             "video_id": video_id,
@@ -292,7 +292,6 @@ class Database:
         await self.async_video_collection.delete_one({"video_id": video_id})
 
 # Verification Methods (Autofilter style):
-
     async def increment_free_trial_count(self, user_id: int):
         """Increment the free trial count for a user"""
         user = await self.get_user(user_id)
@@ -430,6 +429,33 @@ class Database:
         myquery = {"user_id": user_id, "hash": verify_hash}
         newvalues = {"$set": value}
         return await verify_collection.update_one(myquery, newvalues)
+        
+    async def ensure_user_state(user: dict):
+        updated = False
+        today = date.today().isoformat()
+
+        if "free_used" not in user:
+            user["free_used"] = 0
+            updated = True
+
+        if "last_reset" not in user:
+            user["last_reset"] = today
+            updated = True
+
+        if "verification_stage" not in user:
+            user["verification_stage"] = 0
+            updated = True
+
+        if "verification_expiry" not in user:
+            user["verification_expiry"] = 0
+            updated = True
+
+        if "pending_verify" not in user:
+            user["pending_verify"] = None
+            updated = True
+
+        return user, updated
+
 
 # ==================================================================
 
@@ -442,3 +468,4 @@ def format_remaining_time(expiry):
     return f"{days}d {hours}h {minutes}m {seconds}s"
 
 mdb = Database()
+
