@@ -286,6 +286,11 @@ class Database:
         await self.async_video_collection.delete_one({"video_id": video_id})
         return True
 
+    async def mark_video_as_invalid(self, video_id: int):
+        """Mark a video as invalid (empty/deleted) and remove it from the database"""
+        print(f"Marking video {video_id} as invalid and removing from database")
+        await self.async_video_collection.delete_one({"video_id": video_id})
+
 # Verification Methods (Autofilter style):
 
     async def increment_free_trial_count(self, user_id: int):
