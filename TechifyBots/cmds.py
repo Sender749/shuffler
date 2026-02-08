@@ -83,21 +83,30 @@ async def handle_verification(client: Client, message: Message, data: str):
         current_time = datetime.now(tz=ist_timezone)
         
         if verify_type == "verify":
-            await mdb.update_user(verify_user_id, {"last_verified": current_time})
+            await mdb.update_user(verify_user_id, {
+                "last_verified": current_time,
+                "free_trial_count": 0  # Reset counter to allow unlimited access
+            })
             verify_num = 1
             from vars import VERIFY_STAGES
             from TechifyBots.verify_utils import format_time_remaining
             expiry_time = format_time_remaining(VERIFY_STAGES[1])
             msg_text = f"**✅ First Verification Complete!**\n\n<b>You can now access unlimited videos for {expiry_time}!</b>\n\n<i>After the first verification expires, you'll need to complete the second verification.</i>"
         elif verify_type == "verify2":
-            await mdb.update_user(verify_user_id, {"second_time_verified": current_time})
+            await mdb.update_user(verify_user_id, {
+                "second_time_verified": current_time,
+                "free_trial_count": 0  # Reset counter to allow unlimited access
+            })
             verify_num = 2
             from vars import VERIFY_STAGES
             from TechifyBots.verify_utils import format_time_remaining
             expiry_time = format_time_remaining(VERIFY_STAGES[2])
             msg_text = f"**✅ Second Verification Complete!**\n\n<b>You can now access unlimited videos for {expiry_time}!</b>\n\n<i>After the second verification expires, you'll need to complete the third verification.</i>"
         elif verify_type == "verify3":
-            await mdb.update_user(verify_user_id, {"third_time_verified": current_time})
+            await mdb.update_user(verify_user_id, {
+                "third_time_verified": current_time,
+                "free_trial_count": 0  # Reset counter to allow unlimited access
+            })
             verify_num = 3
             from vars import VERIFY_STAGES
             from TechifyBots.verify_utils import format_time_remaining
@@ -118,19 +127,26 @@ async def handle_verification(client: Client, message: Message, data: str):
         )
         
         try:
+            username = f"@{message.from_user.username}" if message.from_user.username else "No Username"
+            first_name = message.from_user.first_name or "No Name"
+            
             await client.send_message(
                 LOG_VR_CHANNEL,
                 f"**✅ Verification Complete**\n\n"
-                f"**User:** {message.from_user.mention}\n"
+                f"**User:** {message.from_user.mention} (`{first_name}`)\n"
                 f"**User ID:** `{verify_user_id}`\n"
-                f"**Verification:** {verify_num}/3\n"
+                f"**Username:** {username}\n"
+                f"**Verification Level:** {verify_num}/3\n"
                 f"**Time:** {current_time.strftime('%d %B %Y, %I:%M %p IST')}"
             )
+            print(f"[VERIFY-LOG] Sent verification log to channel for user {verify_user_id}, level {verify_num}")
         except Exception as e:
-            print(f"Error logging verification: {e}")
+            print(f"[VERIFY-LOG] Error logging verification to channel: {e}")
+            import traceback
+            traceback.print_exc()
     
     except Exception as e:
-        print(f"Verification error: {e}")
+        print(f"[VERIFY-ERROR] Verification error: {e}")
         import traceback
         traceback.print_exc()
         await message.reply("**⚠️ Verification failed! Please try again.**")
