@@ -1,11 +1,11 @@
 from motor.motor_asyncio import AsyncIOMotorClient
-from vars import MONGO_URI
+from vars import MONGO_URI, VERIFY_EXPIRE_TIME
 from datetime import datetime, timedelta
 import asyncio
 from itertools import count
 from bot import bot
-from itertools import count
 from zoneinfo import ZoneInfo
+import pytz
 
 class Database:
     def __init__(self):
@@ -238,6 +238,7 @@ class Database:
         user = await self.async_user_collection.find_one({"_id": user_id})
         if not user:
             limits = await self.get_global_limits()
+            ist_timezone = pytz.timezone('Asia/Kolkata')
             default_user = {
                 "_id": user_id,
                 "plan": "free",
@@ -249,9 +250,9 @@ class Database:
                 "remaining_time": None,
                 # Verification fields
                 "free_trial_count": 0,
-                "last_verified": None,
-                "second_time_verified": None,
-                "third_time_verified": None,
+                "last_verified": datetime(2020, 5, 17, 0, 0, 0, tzinfo=ist_timezone),
+                "second_time_verified": datetime(2019, 5, 17, 0, 0, 0, tzinfo=ist_timezone),
+                "third_time_verified": datetime(2018, 5, 17, 0, 0, 0, tzinfo=ist_timezone),
             }
             await self.async_user_collection.insert_one(default_user)
             return default_user
@@ -285,7 +286,7 @@ class Database:
         await self.async_video_collection.delete_one({"video_id": video_id})
         return True
 
-# Verification Methods:
+# Verification Methods (Autofilter style):
 
     async def increment_free_trial_count(self, user_id: int):
         """Increment the free trial count for a user"""
@@ -300,124 +301,105 @@ class Database:
             return new_count
 
     async def is_user_verified(self, user_id: int):
-        """Check if user completed first verification and it's still valid"""
+        """Check if user completed first verification - valid until midnight"""
         user = await self.get_user(user_id)
         if user.get("plan") == "prime":
             return True
         
-        last_verified = user.get("last_verified")
-        if not last_verified:
+        try:
+            pastDate = user["last_verified"]
+        except:
             return False
-        
-        from zoneinfo import ZoneInfo
-        IST = ZoneInfo("Asia/Kolkata")
-        current_time = datetime.now(IST)
-        
-        if last_verified.tzinfo is None:
-            last_verified = last_verified.replace(tzinfo=IST)
+            
+        ist_timezone = pytz.timezone('Asia/Kolkata')
+        if pastDate.tzinfo is None:
+            pastDate = pastDate.replace(tzinfo=ist_timezone)
         else:
-            last_verified = last_verified.astimezone(IST)
-        
-        time_diff = (current_time - last_verified).total_seconds()
-        from vars import VERIFY_EXPIRE_TIME
-        return time_diff < VERIFY_EXPIRE_TIME
+            pastDate = pastDate.astimezone(ist_timezone)
+            
+        current_time = datetime.now(tz=ist_timezone)
+        seconds_since_midnight = (current_time - datetime(current_time.year, current_time.month, current_time.day, 0, 0, 0, tzinfo=ist_timezone)).total_seconds()
+        time_diff = current_time - pastDate
+        total_seconds = time_diff.total_seconds()
+        return total_seconds <= seconds_since_midnight
 
-    async def is_second_verified(self, user_id: int):
-        """Check if user completed second verification and it's still valid"""
+    async def user_verified(self, user_id: int):
+        """Check if user completed second verification - valid until midnight"""
         user = await self.get_user(user_id)
         if user.get("plan") == "prime":
             return True
-        
-        second_verified = user.get("second_time_verified")
-        if not second_verified:
+            
+        try:
+            pastDate = user["second_time_verified"]
+        except:
             return False
-        
-        from zoneinfo import ZoneInfo
-        IST = ZoneInfo("Asia/Kolkata")
-        current_time = datetime.now(IST)
-        
-        if second_verified.tzinfo is None:
-            second_verified = second_verified.replace(tzinfo=IST)
+            
+        ist_timezone = pytz.timezone('Asia/Kolkata')
+        if pastDate.tzinfo is None:
+            pastDate = pastDate.replace(tzinfo=ist_timezone)
         else:
-            second_verified = second_verified.astimezone(IST)
-        
-        time_diff = (current_time - second_verified).total_seconds()
-        from vars import VERIFY_EXPIRE_TIME
-        return time_diff < VERIFY_EXPIRE_TIME
+            pastDate = pastDate.astimezone(ist_timezone)
+            
+        current_time = datetime.now(tz=ist_timezone)
+        seconds_since_midnight = (current_time - datetime(current_time.year, current_time.month, current_time.day, 0, 0, 0, tzinfo=ist_timezone)).total_seconds()
+        time_diff = current_time - pastDate
+        total_seconds = time_diff.total_seconds()
+        return total_seconds <= seconds_since_midnight
 
-    async def is_third_verified(self, user_id: int):
-        """Check if user completed third verification and it's still valid"""
+    async def use_second_shortener(self, user_id: int, time: int):
+        """Check if should use second shortener"""
         user = await self.get_user(user_id)
-        if user.get("plan") == "prime":
-            return True
-        
-        third_verified = user.get("third_time_verified")
-        if not third_verified:
-            return False
-        
-        from zoneinfo import ZoneInfo
-        IST = ZoneInfo("Asia/Kolkata")
-        current_time = datetime.now(IST)
-        
-        if third_verified.tzinfo is None:
-            third_verified = third_verified.replace(tzinfo=IST)
-        else:
-            third_verified = third_verified.astimezone(IST)
-        
-        time_diff = (current_time - third_verified).total_seconds()
-        from vars import VERIFY_EXPIRE_TIME
-        return time_diff < VERIFY_EXPIRE_TIME
-
-    async def need_second_verification(self, user_id: int):
-        """Check if user needs second verification"""
-        user = await self.get_user(user_id)
-        if user.get("plan") == "prime":
-            return False
-        
-        last_verified = user.get("last_verified")
-        if not last_verified:
-            return False
-        
-        from zoneinfo import ZoneInfo
-        IST = ZoneInfo("Asia/Kolkata")
-        current_time = datetime.now(IST)
-        
-        if last_verified.tzinfo is None:
-            last_verified = last_verified.replace(tzinfo=IST)
-        else:
-            last_verified = last_verified.astimezone(IST)
-        
-        time_since_first = (current_time - last_verified).total_seconds()
-        from vars import VERIFY_EXPIRE_TIME
-        
-        if time_since_first >= VERIFY_EXPIRE_TIME:
-            return True
+        if not user.get("second_time_verified"):
+            ist_timezone = pytz.timezone('Asia/Kolkata')
+            await self.update_user(user_id, {"second_time_verified": datetime(2019, 5, 17, 0, 0, 0, tzinfo=ist_timezone)})
+            user = await self.get_user(user_id)
+            
+        if await self.is_user_verified(user_id):
+            try:
+                pastDate = user["last_verified"]
+            except:
+                return False
+                
+            ist_timezone = pytz.timezone('Asia/Kolkata')
+            if pastDate.tzinfo is None:
+                pastDate = pastDate.replace(tzinfo=ist_timezone)
+            else:
+                pastDate = pastDate.astimezone(ist_timezone)
+                
+            current_time = datetime.now(tz=ist_timezone)
+            time_difference = current_time - pastDate
+            if time_difference > timedelta(seconds=time):
+                pastDate_verified = user["last_verified"].astimezone(ist_timezone)
+                second_time = user["second_time_verified"].astimezone(ist_timezone)
+                return second_time < pastDate_verified
         return False
 
-    async def need_third_verification(self, user_id: int):
-        """Check if user needs third verification"""
+    async def use_third_shortener(self, user_id: int, time: int):
+        """Check if should use third shortener"""
         user = await self.get_user(user_id)
-        if user.get("plan") == "prime":
-            return False
-        
-        second_verified = user.get("second_time_verified")
-        if not second_verified:
-            return False
-        
-        from zoneinfo import ZoneInfo
-        IST = ZoneInfo("Asia/Kolkata")
-        current_time = datetime.now(IST)
-        
-        if second_verified.tzinfo is None:
-            second_verified = second_verified.replace(tzinfo=IST)
-        else:
-            second_verified = second_verified.astimezone(IST)
-        
-        time_since_second = (current_time - second_verified).total_seconds()
-        from vars import VERIFY_EXPIRE_TIME
-        
-        if time_since_second >= VERIFY_EXPIRE_TIME:
-            return True
+        if not user.get("third_time_verified"):
+            ist_timezone = pytz.timezone('Asia/Kolkata')
+            await self.update_user(user_id, {"third_time_verified": datetime(2018, 5, 17, 0, 0, 0, tzinfo=ist_timezone)})
+            user = await self.get_user(user_id)
+            
+        if await self.user_verified(user_id):
+            try:
+                pastDate = user["second_time_verified"]
+            except:
+                return False
+                
+            ist_timezone = pytz.timezone('Asia/Kolkata')
+            if pastDate.tzinfo is None:
+                pastDate = pastDate.replace(tzinfo=ist_timezone)
+            else:
+                pastDate = pastDate.astimezone(ist_timezone)
+                
+            current_time = datetime.now(tz=ist_timezone)
+            time_difference = current_time - pastDate
+            if time_difference > timedelta(seconds=time):
+                second_verified = user["second_time_verified"].astimezone(ist_timezone)
+                third_time = user["third_time_verified"].astimezone(ist_timezone)
+                return third_time < second_verified
         return False
 
     async def create_verify_id(self, user_id: int, verify_hash: str):
@@ -455,6 +437,3 @@ def format_remaining_time(expiry):
     return f"{days}d {hours}h {minutes}m {seconds}s"
 
 mdb = Database()
-
-
-
