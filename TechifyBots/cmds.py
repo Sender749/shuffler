@@ -85,15 +85,24 @@ async def handle_verification(client: Client, message: Message, data: str):
         if verify_type == "verify":
             await mdb.update_user(verify_user_id, {"last_verified": current_time})
             verify_num = 1
-            msg_text = "**✅ First Verification Complete!**\n\n<b>You can now access unlimited videos until midnight (IST)!</b>\n\n<i>After the first timer expires, you'll need to complete the second verification.</i>"
+            from vars import VERIFY_STAGES
+            from TechifyBots.verify_utils import format_time_remaining
+            expiry_time = format_time_remaining(VERIFY_STAGES[1])
+            msg_text = f"**✅ First Verification Complete!**\n\n<b>You can now access unlimited videos for {expiry_time}!</b>\n\n<i>After the first verification expires, you'll need to complete the second verification.</i>"
         elif verify_type == "verify2":
             await mdb.update_user(verify_user_id, {"second_time_verified": current_time})
             verify_num = 2
-            msg_text = "**✅ Second Verification Complete!**\n\n<b>You can now access unlimited videos until midnight (IST)!</b>\n\n<i>After the second timer expires, you'll need to complete the third verification.</i>"
+            from vars import VERIFY_STAGES
+            from TechifyBots.verify_utils import format_time_remaining
+            expiry_time = format_time_remaining(VERIFY_STAGES[2])
+            msg_text = f"**✅ Second Verification Complete!**\n\n<b>You can now access unlimited videos for {expiry_time}!</b>\n\n<i>After the second verification expires, you'll need to complete the third verification.</i>"
         elif verify_type == "verify3":
             await mdb.update_user(verify_user_id, {"third_time_verified": current_time})
             verify_num = 3
-            msg_text = "**✅ Third Verification Complete!**\n\n<b>You can now access unlimited videos until midnight (IST)!</b>\n\n<i>This is the final verification for today!</i>"
+            from vars import VERIFY_STAGES
+            from TechifyBots.verify_utils import format_time_remaining
+            expiry_time = format_time_remaining(VERIFY_STAGES[3])
+            msg_text = f"**✅ Third Verification Complete!**\n\n<b>You can now access unlimited videos for {expiry_time}!</b>\n\n<i>This is the final verification for today!</i>"
         else:
             await message.reply("**⚠️ Invalid verification type!**")
             return
@@ -385,59 +394,67 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         return
     
     # Free trial exhausted - Check verification status
-    user_verified = await mdb.is_user_verified(user_id)
-    is_second_shortener = await mdb.use_second_shortener(user_id, VERIFY_EXPIRE_TIME)
-    is_third_shortener = await mdb.use_third_shortener(user_id, VERIFY_EXPIRE_TIME)
+    # Check which verifications are currently valid
+    first_valid = await mdb.is_user_verified(user_id)
+    second_valid = await mdb.user_verified(user_id)
+    third_valid = await mdb.third_verified(user_id)
     
-    # Determine which verification to show
-    if not user_verified:
-        # Need first verification
-        verify_hash = encode_string(f"verify_{user_id}_{random.randint(1000, 9999)}")
-        await mdb.create_verify_id(user_id, verify_hash)
+    # Check which verification is needed
+    need_second = await mdb.use_second_shortener(user_id, VERIFY_EXPIRE_TIME)
+    need_third = await mdb.use_third_shortener(user_id, VERIFY_EXPIRE_TIME)
+    
+    # Priority: If any verification is valid, send video
+    if third_valid or second_valid or first_valid:
+        # User has a valid verification, send video
+        videos = await mdb.get_free_videos()
+        if not videos:
+            await reply_func("No videos available at the moment.")
+            return
+        random_video = random.choice(videos)
         
-        verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify_{user_id}_{verify_hash}"
-        shortlink = get_shortlink(verify_url, SHORTENER_API1, SHORTENER_WEBSITE1)
-        
-        btn = [
-            [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
-            [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL1)]
-        ]
-        
-        msg_text = (
-            f"<b>🔐 Verification Required (1/3)</b>\n\n"
-            f"<b>You've used your {FREE_VIDEOS_COUNT} free videos!</b>\n\n"
-            f"<b>Complete verification for unlimited access.</b>\n\n"
-            f"<b>⏰ Valid until midnight (IST)</b>\n"
-            f"<b>💎 Premium users skip verification!</b>"
-        )
-        
-        await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
+        try:
+            # Determine which verification is active
+            if third_valid:
+                verify_msg = "<b>✅ Third Verification Active!</b>"
+            elif second_valid:
+                verify_msg = "<b>✅ Second Verification Active!</b>"
+            else:
+                verify_msg = "<b>✅ First Verification Active!</b>"
+            
+            caption_text = (
+                f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>
+
+"
+                f"{verify_msg}
+
+"
+                f"<i>Enjoy unlimited videos until verification expires!</i>"
+            )
+            
+            try:
+                await send_or_edit_video(
+                    client=client,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    video_id=random_video["video_id"],
+                    caption=caption_text,
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
+                )
+            except Exception as send_error:
+                print(f"[VIDEO-LOGIC] Failed to send video, trying another: {send_error}")
+                await reply_func(f"**⚠️ Video unavailable, trying another...**")
+                await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
+                return
+            
+        except Exception as e:
+            print(f"[VIDEO-LOGIC] Error in verified flow: {e}")
+            import traceback
+            traceback.print_exc()
+            await reply_func("Failed to send video.")
         return
-        
-    elif user_verified and is_second_shortener:
-        # Need second verification
-        verify_hash = encode_string(f"verify2_{user_id}_{random.randint(1000, 9999)}")
-        await mdb.create_verify_id(user_id, verify_hash)
-        
-        verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify2_{user_id}_{verify_hash}"
-        shortlink = get_shortlink(verify_url, SHORTENER_API2, SHORTENER_WEBSITE2)
-        
-        btn = [
-            [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
-            [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL2)]
-        ]
-        
-        msg_text = (
-            f"<b>🔐 Verification Required (2/3)</b>\n\n"
-            f"<b>First verification expired!</b>\n\n"
-            f"<b>Complete 2nd verification to continue.</b>\n\n"
-            f"<b>⏰ Valid until midnight (IST)</b>"
-        )
-        
-        await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
-        return
-        
-    elif user_verified and is_third_shortener:
+    
+    # No valid verification - determine which verification to show
+    if need_third:
         # Need third verification
         verify_hash = encode_string(f"verify3_{user_id}_{random.randint(1000, 9999)}")
         await mdb.create_verify_id(user_id, verify_hash)
@@ -450,50 +467,95 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL3)]
         ]
         
+        from vars import VERIFY_STAGES
+        from TechifyBots.verify_utils import format_time_remaining
+        
         msg_text = (
-            f"<b>🔐 Verification Required (3/3)</b>\n\n"
-            f"<b>Second verification expired!</b>\n\n"
-            f"<b>Complete final verification to continue.</b>\n\n"
-            f"<b>⏰ Valid until midnight (IST)</b>"
+            f"<b>🔐 Verification Required (3/3)</b>
+
+"
+            f"<b>Second verification expired!</b>
+
+"
+            f"<b>Complete final verification to continue.</b>
+
+"
+            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[3])}</b>
+"
+            f"<b>💎 Premium users skip verification!</b>"
         )
         
         await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
         return
-    
-    # User is verified, send video
-    videos = await mdb.get_free_videos()
-    if not videos:
-        await reply_func("No videos available at the moment.")
-        return
-    random_video = random.choice(videos)
-    
-    try:
-        caption_text = (
-            f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>\n\n"
-            f"<b>✅ Verification Active!</b>\n\n"
-            f"<i>Enjoy unlimited videos until midnight!</i>"
+        
+    elif need_second:
+        # Need second verification
+        verify_hash = encode_string(f"verify2_{user_id}_{random.randint(1000, 9999)}")
+        await mdb.create_verify_id(user_id, verify_hash)
+        
+        verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify2_{user_id}_{verify_hash}"
+        shortlink = get_shortlink(verify_url, SHORTENER_API2, SHORTENER_WEBSITE2)
+        
+        btn = [
+            [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
+            [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL2)]
+        ]
+        
+        from vars import VERIFY_STAGES
+        from TechifyBots.verify_utils import format_time_remaining
+        
+        msg_text = (
+            f"<b>🔐 Verification Required (2/3)</b>
+
+"
+            f"<b>First verification expired!</b>
+
+"
+            f"<b>Complete 2nd verification to continue.</b>
+
+"
+            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[2])}</b>
+"
+            f"<b>💎 Premium users skip verification!</b>"
         )
         
-        try:
-            await send_or_edit_video(
-                client=client,
-                user_id=user_id,
-                chat_id=chat_id,
-                video_id=random_video["video_id"],
-                caption=caption_text,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
-            )
-        except Exception as send_error:
-            print(f"[VIDEO-LOGIC] Failed to send video, trying another: {send_error}")
-            await reply_func(f"**⚠️ Video unavailable, trying another...**")
-            await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
-            return
+        await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
+        return
         
-    except Exception as e:
-        print(f"[VIDEO-LOGIC] Error in verified flow: {e}")
-        import traceback
-        traceback.print_exc()
-        await reply_func("Failed to send video.")
+    else:
+        # Need first verification
+        verify_hash = encode_string(f"verify_{user_id}_{random.randint(1000, 9999)}")
+        await mdb.create_verify_id(user_id, verify_hash)
+        
+        verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify_{user_id}_{verify_hash}"
+        shortlink = get_shortlink(verify_url, SHORTENER_API1, SHORTENER_WEBSITE1)
+        
+        btn = [
+            [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
+            [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL1)]
+        ]
+        
+        from vars import VERIFY_STAGES
+        from TechifyBots.verify_utils import format_time_remaining
+        
+        msg_text = (
+            f"<b>🔐 Verification Required (1/3)</b>
+
+"
+            f"<b>You've used your {FREE_VIDEOS_COUNT} free videos!</b>
+
+"
+            f"<b>Complete verification for unlimited access.</b>
+
+"
+            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[1])}</b>
+"
+            f"<b>💎 Premium users skip verification!</b>"
+        )
+        
+        await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
+        return
+
 
 @Client.on_message(filters.command("getvideos") & filters.private)
 async def send_random_video(client: Client, message: Message):
