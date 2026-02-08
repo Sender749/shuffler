@@ -1,5 +1,5 @@
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-from pyrogram import Client
+from pyrogram import Client, filters
 from Script import text
 from vars import ADMIN_ID
 from Database.maindb import mdb
@@ -8,11 +8,9 @@ from TechifyBots.cmds import send_random_video_logic, VIDEO_MSG_CACHE
 from TechifyBots.fsub import get_fsub
 from vars import IS_FSUB
 
-@Client.on_callback_query()
+# Use a filter to exclude index-related callbacks - this ensures index.py handlers run first
+@Client.on_callback_query(~filters.regex(r"^idx_"))
 async def callback_query_handler(client, query: CallbackQuery):
-    # Skip index-related callbacks - they are handled in index.py with specific filters
-    if query.data.startswith("idx_"):
-        return
     
     try:
         if query.data == "start":
