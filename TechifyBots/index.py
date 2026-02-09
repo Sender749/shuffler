@@ -210,7 +210,7 @@ def extract_message_id_from_link(text: str):
     
     return None
 
-@Client.on_message(filters.private & filters.user(ADMIN_ID) & ~filters.command(["index", "stats", "broadcast", "ban", "unban", "maintenance", "banlist", "delete", "deleteall", "prime", "remove", "banlist"]))
+@Client.on_message(filters.private & filters.user(ADMIN_ID) & ~filters.command(["index", "stats", "broadcast", "ban", "unban", "maintenance", "banlist", "delete", "deleteall", "prime", "remove", "banlist", "getvideos", "start", "myplan", "setlimit"]))
 async def handle_index_input(client: Client, message: Message):
     """Handle user input during indexing flow"""
     user_id = message.from_user.id
