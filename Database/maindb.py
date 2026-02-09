@@ -1,5 +1,5 @@
 from motor.motor_asyncio import AsyncIOMotorClient
-from vars import MONGO_URI, VERIFY_EXPIRE_TIME
+from vars import MONGO_URI, VERIFY_EXPIRE_TIME, VERIFY_STAGES
 from datetime import datetime, timedelta, date
 import asyncio
 from itertools import count
@@ -306,94 +306,49 @@ class Database:
 
 
     async def is_user_verified(self, user_id: int):
-        """Check if user completed first verification and it's still valid"""
         user = await self.get_user(user_id)
-        
-        # Premium users always verified
         if user.get("plan") == "prime":
             return True
-        
-        # Check if user has completed 1st verification
-        if not user.get("last_verified"):
+        verify_time = user.get("last_verified")
+        if not verify_time:
             return False
-            
-        ist_timezone = pytz.timezone('Asia/Kolkata')
-        verify_time = user["last_verified"]
-        
-        # Ensure timezone
+        ist = pytz.timezone("Asia/Kolkata")
         if verify_time.tzinfo is None:
-            verify_time = verify_time.replace(tzinfo=ist_timezone)
-        else:
-            verify_time = verify_time.astimezone(ist_timezone)
-            
-        current_time = datetime.now(tz=ist_timezone)
-        time_since_verify = (current_time - verify_time).total_seconds()
-        
-        # Import VERIFY_STAGES from vars
-        from vars import VERIFY_STAGES
-        
-        # Check if verification is still valid (within expiry time)
-        return time_since_verify < VERIFY_STAGES[1]
+            verify_time = ist.localize(verify_time)
+        now = datetime.now(ist)
+        diff = (now - verify_time).total_seconds()
+        print(f"[VERIFY-CHECK] 1st diff seconds: {diff}")
+        return diff < VERIFY_STAGES[1]
 
     async def user_verified(self, user_id: int):
-        """Check if user completed second verification and it's still valid"""
         user = await self.get_user(user_id)
-        
-        # Premium users always verified
         if user.get("plan") == "prime":
             return True
-            
-        # Check if user has completed 2nd verification
-        if not user.get("second_time_verified"):
+        verify_time = user.get("second_time_verified")
+        if not verify_time:
             return False
-            
-        ist_timezone = pytz.timezone('Asia/Kolkata')
-        verify_time = user["second_time_verified"]
-        
-        # Ensure timezone
+        ist = pytz.timezone("Asia/Kolkata")
         if verify_time.tzinfo is None:
-            verify_time = verify_time.replace(tzinfo=ist_timezone)
-        else:
-            verify_time = verify_time.astimezone(ist_timezone)
-            
-        current_time = datetime.now(tz=ist_timezone)
-        time_since_verify = (current_time - verify_time).total_seconds()
-        
-        # Import VERIFY_STAGES from vars
-        from vars import VERIFY_STAGES
-        
-        # Check if verification is still valid (within expiry time)
-        return time_since_verify < VERIFY_STAGES[2]
+            verify_time = ist.localize(verify_time)
+        now = datetime.now(ist)
+        diff = (now - verify_time).total_seconds()
+        print(f"[VERIFY-CHECK] 2nd diff seconds: {diff}")
+        return diff < VERIFY_STAGES[2]
 
     async def third_verified(self, user_id: int):
-        """Check if user completed third verification and it's still valid"""
         user = await self.get_user(user_id)
-        
-        # Premium users always verified
         if user.get("plan") == "prime":
             return True
-            
-        # Check if user has completed 3rd verification
-        if not user.get("third_time_verified"):
+        verify_time = user.get("third_time_verified")
+        if not verify_time:
             return False
-            
-        ist_timezone = pytz.timezone('Asia/Kolkata')
-        verify_time = user["third_time_verified"]
-        
-        # Ensure timezone
+        ist = pytz.timezone("Asia/Kolkata")
         if verify_time.tzinfo is None:
-            verify_time = verify_time.replace(tzinfo=ist_timezone)
-        else:
-            verify_time = verify_time.astimezone(ist_timezone)
-            
-        current_time = datetime.now(tz=ist_timezone)
-        time_since_verify = (current_time - verify_time).total_seconds()
-        
-        # Import VERIFY_STAGES from vars
-        from vars import VERIFY_STAGES
-        
-        # Check if verification is still valid (within expiry time)
-        return time_since_verify < VERIFY_STAGES[3]
+            verify_time = ist.localize(verify_time)
+        now = datetime.now(ist)
+        diff = (now - verify_time).total_seconds()
+        print(f"[VERIFY-CHECK] 3rd diff seconds: {diff}")
+        return diff < VERIFY_STAGES[3]
 
     async def use_second_shortener(self, user_id: int, time: int):
         """Check if user needs second verification (1st expired, 2nd not done)"""
@@ -535,4 +490,5 @@ def format_remaining_time(expiry):
     return f"{days}d {hours}h {minutes}m {seconds}s"
 
 mdb = Database()
+
 
