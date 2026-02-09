@@ -8,6 +8,8 @@ from Database.userdb import udb
 import random, asyncio, base64
 from .fsub import get_fsub
 from Script import text
+import requests
+from urllib.parse import quote
 
 # Video message cache (user_id: {"msg": message_object, "delete_task": task})
 VIDEO_MSG_CACHE = {}
@@ -16,9 +18,38 @@ def encode_string(text: str):
     return base64.urlsafe_b64encode(text.encode()).decode()
 
 def get_shortlink(url, api, website):
+    """Generate shortlink using the shortener API"""
     try:
-        return f"{website}/api?api={api}&url={url}"
-    except:
+        # Format: https://website.com/api?api=API_KEY&url=ENCODED_URL
+        encoded_url = quote(url, safe='')
+        shortlink_url = f"https://{website}/api?api={api}&url={encoded_url}"
+        
+        print(f"[SHORTENER] Requesting: {shortlink_url[:100]}...")
+        
+        # Make request to shortener API
+        response = requests.get(shortlink_url, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # Different shorteners return data differently
+        if 'shortenedUrl' in data:
+            result = data['shortenedUrl']
+        elif 'shortlink' in data:
+            result = data['shortlink']
+        elif 'short_url' in data:
+            result = data['short_url']
+        elif 'url' in data:
+            result = data['url']
+        else:
+            print(f"[SHORTENER] Unexpected response format: {data}")
+            return url
+        
+        print(f"[SHORTENER] Success: {result}")
+        return result
+            
+    except Exception as e:
+        print(f"[SHORTENER] Error creating shortlink: {e}")
         return url
             
 async def get_updated_limits():
@@ -66,13 +97,27 @@ async def start_command(client, message):
     )
 
 async def handle_verification(client: Client, message: Message, data: str):
+    """Handle verification link callback"""
     try:
+        # Parse: verify1_USER_ID_HASH or verify2_USER_ID_HASH or verify3_USER_ID_HASH
         parts = data.split("_")
-        verify_type = parts[0]
+        
+        if len(parts) < 3:
+            await message.reply("⚠️ Invalid verification link format!")
+            return
+        
+        verify_type = parts[0]  # verify1, verify2, or verify3
         verify_user_id = int(parts[1])
+        verify_hash = "_".join(parts[2:])  # Rejoin in case hash contains underscores
+        
+        print(f"[VERIFY] Type: {verify_type}, User: {verify_user_id}, Hash: {verify_hash}")
+        
+        # Check if the link is for this user
         if message.from_user.id != verify_user_id:
             await message.reply("⚠️ This verification link is not for you!")
             return
+        
+        # Determine stage
         if verify_type in ["verify", "verify1"]:
             stage = 1
         elif verify_type == "verify2":
@@ -82,23 +127,58 @@ async def handle_verification(client: Client, message: Message, data: str):
         else:
             await message.reply("⚠️ Invalid verification type!")
             return
+        
+        # Verify the hash is valid
+        verify_info = await mdb.get_verify_id_info(verify_user_id, verify_hash)
+        if not verify_info:
+            await message.reply("⚠️ Invalid or expired verification link!")
+            return
+        
+        # Mark as verified
+        await mdb.update_verify_id_info(verify_user_id, verify_hash, {"verified": True})
+        
+        # Set the verification timer
         duration = VERIFY_STAGES[stage]
         await mdb.set_verify_timer(verify_user_id, stage, duration)
+        
         print(f"[TIMER] User {verify_user_id} verified stage {stage} for {duration}s")
+        
+        # Send success message
+        hours = duration // 3600
+        minutes = (duration % 3600) // 60
+        time_text = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+        
         await message.reply_photo(
             photo=VERIFY_IMG,
             caption=(
-                f"✅ Verification {stage} completed!\n\n"
-                f"⏱ Valid for {duration} seconds\n\n"
-                "Click below to get videos"
+                f"✅ **Verification Stage {stage} Completed!**\n\n"
+                f"⏱ Valid for: **{time_text}**\n"
+                f"🎬 Unlimited videos until timer expires!\n\n"
+                f"<blockquote>Click below to start watching</blockquote>"
             ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🎥 Get Videos Now", callback_data="getvideos_cb")]
             ])
         )
+        
+        # Log to verification channel
+        try:
+            await client.send_message(
+                LOG_VR_CHANNEL,
+                f"✅ **Verification Complete**\n\n"
+                f"👤 User: {message.from_user.mention}\n"
+                f"🆔 ID: `{verify_user_id}`\n"
+                f"📊 Stage: {stage}/3\n"
+                f"⏱️ Duration: {time_text}"
+            )
+        except:
+            pass
+            
     except Exception as e:
         print(f"[VERIFY-ERROR] {e}")
-        await message.reply("Verification failed!")
+        import traceback
+        traceback.print_exc()
+        await message.reply("⚠️ Verification failed! Please try again.")
 
 async def auto_delete_video(user_id: int, message: Message, delay: int = 300):
     """Auto delete video after delay if no new request comes"""
@@ -222,6 +302,7 @@ async def send_or_edit_video(client: Client, user_id: int, chat_id: int, video_i
         raise
 
 async def send_random_video_logic(client: Client, user, chat_id, reply_func, edit_message=None):
+    """Main logic for sending videos with verification system"""
     limits = await get_updated_limits()
     if limits.get('maintenance', False):
         await reply_func("**🛠️ Bot Under Maintenance — Back Soon!**")
@@ -235,25 +316,18 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
 
     # ================= PREMIUM USER =================
     if plan == "prime":
+        # Premium users get unlimited videos without verification
         videos = await mdb.get_all_videos()
         if not videos:
-            await reply_func("No videos available at the moment.")
+            await reply_func("❌ No videos available at the moment.")
             return
 
         random_video = random.choice(videos)
-        daily_count = db_user.get("daily_count", 0)
-        daily_limit = db_user.get("daily_limit", PRIME_LIMIT)
-
-        if daily_count >= daily_limit:
-            await reply_func(
-                f"**🚫 You've reached your daily limit of {daily_limit} videos.\n\n"
-                f">Limit will reset every day at 5 AM (IST).**"
-            )
-            return
-
+        
         caption_text = (
             f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>\n\n"
-            f"<b>💎 Premium User - Unlimited Access!</b>"
+            f"<b>💎 Premium User - Unlimited Access!</b>\n"
+            f"<i>No verification needed</i>"
         )
 
         await send_or_edit_video(
@@ -265,29 +339,44 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
         )
 
-        await mdb.increment_daily_count(user_id)
         return
 
 
-    # ================= TIMER VERIFICATION SYSTEM =================
+    # ================= FREE USER WITH TIMER VERIFICATION SYSTEM =================
 
+    # Check if user has active verification timer
     is_valid, stage = await mdb.get_verify_status(user_id)
 
-    print(f"[TIMER] valid={is_valid} stage={stage}")
+    print(f"[TIMER] User {user_id}: valid={is_valid}, stage={stage}")
 
     # ---- USER IS VERIFIED (TIMER ACTIVE) ----
     if is_valid:
-
-        videos = await mdb.get_free_videos()
+        # User is verified, give unlimited access until timer expires
+        videos = await mdb.get_all_videos()
         if not videos:
-            await reply_func("No videos available at the moment.")
+            await reply_func("❌ No videos available at the moment.")
             return
 
         random_video = random.choice(videos)
 
+        # Get remaining time
+        user_data = await mdb.get_user(user_id)
+        expire = user_data.get("verify_expire", 0)
+        import time as time_module
+        remaining_seconds = max(0, expire - int(time_module.time()))
+        
+        hours = remaining_seconds // 3600
+        minutes = (remaining_seconds % 3600) // 60
+        
+        if hours > 0:
+            time_left = f"{hours}h {minutes}m"
+        else:
+            time_left = f"{minutes}m"
+
         caption_text = (
-            f"<b>✅ Verified Stage {stage}</b>\n"
-            f"<i>Unlimited access until timer ends</i>\n\n"
+            f"<b>✅ Verified - Stage {stage}/3</b>\n"
+            f"<b>⏱️ Time Left: {time_left}</b>\n"
+            f"<i>Unlimited access until timer ends!</i>\n\n"
             f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>"
         )
 
@@ -309,12 +398,12 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
     print(f"[VIDEO-LOGIC] Free trial count: {free_trial_count}/{FREE_VIDEOS_COUNT}")
 
     if free_trial_count < FREE_VIDEOS_COUNT:
-
+        # Give free trial videos
         print(f"[VIDEO-LOGIC] Sending free trial video {free_trial_count + 1}/{FREE_VIDEOS_COUNT}")
 
-        videos = await mdb.get_free_videos()
+        videos = await mdb.get_all_videos()
         if not videos:
-            await reply_func("No videos available at the moment.")
+            await reply_func("❌ No videos available at the moment.")
             return
 
         random_video = random.choice(videos)
@@ -337,33 +426,61 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
         )
 
+        # Increment free trial count
         await mdb.increment_free_trial_count(user_id)
         return
 
 
     # ================= NEED VERIFICATION =================
-
+    
+    # User has exhausted free videos and has no active verification
+    # Determine which stage they need next
     next_stage = await mdb.next_stage(user_id)
-    print(f"[TIMER] Need stage {next_stage}")
+    print(f"[TIMER] User {user_id} needs verification stage {next_stage}")
+    
+    # Create verification hash
     verify_hash = encode_string(f"verify{next_stage}_{user_id}_{random.randint(1000,9999)}")
     await mdb.create_verify_id(user_id, verify_hash)
-    verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify{next_stage}_{user_id}_{verify_hash}"
+    
+    # Create verification URL
+    bot_username = (await client.get_me()).username
+    verify_url = f"https://telegram.me/{bot_username}?start=verify{next_stage}_{user_id}_{verify_hash}"
+    
+    # Get appropriate shortener for this stage
     if next_stage == 1:
         shortlink = get_shortlink(verify_url, SHORTENER_API1, SHORTENER_WEBSITE1)
         tutorial = TUTORIAL1
+        duration = VERIFY_STAGES[1]
     elif next_stage == 2:
         shortlink = get_shortlink(verify_url, SHORTENER_API2, SHORTENER_WEBSITE2)
         tutorial = TUTORIAL2
-    else:
+        duration = VERIFY_STAGES[2]
+    else:  # stage 3
         shortlink = get_shortlink(verify_url, SHORTENER_API3, SHORTENER_WEBSITE3)
         tutorial = TUTORIAL3
+        duration = VERIFY_STAGES[3]
+    
+    # Calculate duration display
+    hours = duration // 3600
+    minutes = (duration % 3600) // 60
+    
+    if hours > 0:
+        duration_text = f"{hours}h {minutes}m"
+    else:
+        duration_text = f"{minutes}m"
+    
     btn = [
         [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
         [InlineKeyboardButton("📚 How To Verify?", url=tutorial)]
     ]
+    
     await reply_func(
         f"<b>🔐 Verification Required (Stage {next_stage}/3)</b>\n\n"
-        f"<b>Complete verification to continue.</b>",
+        f"<b>⏱️ Duration: {duration_text}</b>\n"
+        f"<b>🎬 Benefit: Unlimited videos!</b>\n\n"
+        f"<i>Complete verification to continue watching.</i>\n\n"
+        f"<blockquote>Your free trial of {FREE_VIDEOS_COUNT} videos has ended.\n"
+        f"Verify to get unlimited access for {duration_text}!</blockquote>",
         reply_markup=InlineKeyboardMarkup(btn),
         disable_web_page_preview=True
     )
@@ -371,6 +488,7 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
 
 @Client.on_message(filters.command("getvideos") & filters.private)
 async def send_random_video(client: Client, message: Message):
+    """Command to get random videos"""
     if await udb.is_user_banned(message.from_user.id):
         await message.reply(
             "**🚫 You are banned from using this bot**",
@@ -384,7 +502,3 @@ async def send_random_video(client: Client, message: Message):
         chat_id=message.chat.id,
         reply_func=message.reply_text
     )
-
-
-
-
