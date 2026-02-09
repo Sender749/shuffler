@@ -248,8 +248,11 @@ class Database:
                 "sent_videos": [],
                 "prime_expiry": None,
                 "remaining_time": None,
-                # Verification fields
+                # Verification fields - timer-based system
                 "free_trial_count": 0,
+                "verify_stage": 0,
+                "verify_expire": 0,
+                # Legacy fields (for backward compatibility, will be cleaned by timer system)
                 "last_verified": datetime(2020, 5, 17, 0, 0, 0, tzinfo=ist_timezone),
                 "second_time_verified": datetime(2019, 5, 17, 0, 0, 0, tzinfo=ist_timezone),
                 "third_time_verified": datetime(2018, 5, 17, 0, 0, 0, tzinfo=ist_timezone),
@@ -292,6 +295,58 @@ class Database:
         await self.async_video_collection.delete_one({"video_id": video_id})
 
 # Verification Methods (Autofilter style):
+    async def is_user_verified(self, user_id: int):
+        """Check if user has completed first verification (stage 1)"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return True
+        expire = user.get("verify_expire", 0)
+        stage = user.get("verify_stage", 0)
+        now = int(time.time())
+        # User is verified if they have an active stage 1 or higher
+        if stage >= 1 and expire and expire > now:
+            return True
+        return False
+    
+    async def user_verified(self, user_id: int):
+        """Check if user has completed second verification (stage 2)"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return True
+        expire = user.get("verify_expire", 0)
+        stage = user.get("verify_stage", 0)
+        now = int(time.time())
+        # User has second verification if they're on stage 2 or higher and it's not expired
+        if stage >= 2 and expire and expire > now:
+            return True
+        return False
+    
+    async def use_second_shortener(self, user_id: int, verify_expire_time: int):
+        """Check if user needs second shortener (stage 1 expired but stage 2 not done)"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return False
+        expire = user.get("verify_expire", 0)
+        stage = user.get("verify_stage", 0)
+        now = int(time.time())
+        # Need second shortener if stage 1 expired and not on stage 2
+        if stage == 1 and expire and expire <= now:
+            return True
+        return False
+    
+    async def use_third_shortener(self, user_id: int, verify_expire_time: int):
+        """Check if user needs third shortener (stage 2 expired but stage 3 not done)"""
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return False
+        expire = user.get("verify_expire", 0)
+        stage = user.get("verify_stage", 0)
+        now = int(time.time())
+        # Need third shortener if stage 2 expired and not on stage 3
+        if stage == 2 and expire and expire <= now:
+            return True
+        return False
+
     async def increment_free_trial_count(self, user_id: int):
         """Increment the free trial count for a user"""
         user = await self.get_user(user_id)
