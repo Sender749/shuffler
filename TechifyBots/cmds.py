@@ -82,12 +82,10 @@ async def handle_verification(client: Client, message: Message, data: str):
         ist_timezone = pytz.timezone('Asia/Kolkata')
         current_time = datetime.now(tz=ist_timezone)
         
-        # CRITICAL FIX: Do NOT reset free_trial_count - this was causing the bug
-        # Verified users should get unlimited access, not limited by free_trial_count
+        # Update user verification timestamp
         if verify_type == "verify":
             await mdb.update_user(verify_user_id, {
                 "last_verified": current_time
-                # Removed: "free_trial_count": 0  - This was the bug!
             })
             verify_num = 1
             from vars import VERIFY_STAGES
@@ -97,7 +95,6 @@ async def handle_verification(client: Client, message: Message, data: str):
         elif verify_type == "verify2":
             await mdb.update_user(verify_user_id, {
                 "second_time_verified": current_time
-                # Removed: "free_trial_count": 0  - This was the bug!
             })
             verify_num = 2
             from vars import VERIFY_STAGES
@@ -107,7 +104,6 @@ async def handle_verification(client: Client, message: Message, data: str):
         elif verify_type == "verify3":
             await mdb.update_user(verify_user_id, {
                 "third_time_verified": current_time
-                # Removed: "free_trial_count": 0  - This was the bug!
             })
             verify_num = 3
             from vars import VERIFY_STAGES
@@ -118,7 +114,10 @@ async def handle_verification(client: Client, message: Message, data: str):
             await message.reply("**⚠️ Invalid verification type!**")
             return
         
+        # Mark verification as used
         await mdb.update_verify_id_info(verify_user_id, verify_hash, {"verified": True})
+        
+        print(f"[VERIFY] User {verify_user_id} completed verification {verify_num}")
         
         await message.reply_photo(
             photo=VERIFY_IMG,
@@ -191,7 +190,7 @@ async def send_or_edit_video(client: Client, user_id: int, chat_id: int, video_i
     
     existing_msg = cache_entry.get("msg") if cache_entry else None
     
-    # CRITICAL FIX: Check if message still exists before trying to edit
+    # Check if message still exists before trying to edit
     if existing_msg:
         try:
             # Test if message still exists by trying to get it
@@ -284,18 +283,14 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         return
     
     user_id = user.id
+    
+    # CRITICAL FIX: Always fetch fresh user data to avoid stale cache issues
     db_user = await mdb.get_user(user_id)
     plan = db_user.get("plan", "free")
     
-    # CRITICAL FIX: Check verification status FIRST before checking free trial count
-    # This ensures verified users bypass the free trial limit completely
+    print(f"[VIDEO-LOGIC] User {user_id} requesting video, plan: {plan}")
     
-    # Check verification status
-    first_valid = await mdb.is_user_verified(user_id)
-    second_valid = await mdb.user_verified(user_id)
-    third_valid = await mdb.third_verified(user_id)
-    
-    # Premium users get unlimited access
+    # Premium users get unlimited access (with daily limit)
     if plan == "prime":
         videos = await mdb.get_all_videos()
         if not videos:
@@ -342,9 +337,19 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             await reply_func("Failed to send video.")
         return
     
-    # CRITICAL FIX: If user has ANY valid verification, give UNLIMITED access
-    # This bypasses free_trial_count completely for verified users
+    # For free users: Check verification status FIRST (CRITICAL FIX)
+    # We check verification BEFORE checking free_trial_count
+    # This ensures verified users get unlimited access
+    
+    first_valid = await mdb.is_user_verified(user_id)
+    second_valid = await mdb.user_verified(user_id)
+    third_valid = await mdb.third_verified(user_id)
+    
+    print(f"[VIDEO-LOGIC] Verification status - 1st: {first_valid}, 2nd: {second_valid}, 3rd: {third_valid}")
+    
+    # If user has ANY valid verification, give UNLIMITED access
     if third_valid or second_valid or first_valid:
+        print(f"[VIDEO-LOGIC] User has valid verification, sending unlimited video")
         videos = await mdb.get_free_videos()
         if not videos:
             await reply_func("No videos available at the moment.")
@@ -391,8 +396,8 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
                 await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
                 return
             
-            # CRITICAL FIX: Do NOT increment free_trial_count for verified users!
-            # They have unlimited access until verification expires
+            # Do NOT increment free_trial_count for verified users!
+            print(f"[VIDEO-LOGIC] Video sent successfully to verified user")
             
         except Exception as e:
             print(f"[VIDEO-LOGIC] Error in verified flow: {e}")
@@ -401,8 +406,9 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             await reply_func("Failed to send video.")
         return
     
-    # Free users without verification - Check if IS_VERIFY is disabled
+    # No valid verification - check if verification is disabled
     if not IS_VERIFY:
+        print(f"[VIDEO-LOGIC] Verification disabled, using daily limit system")
         videos = await mdb.get_free_videos()
         if not videos:
             await reply_func("No videos available at the moment.")
@@ -450,11 +456,14 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             await reply_func("Failed to send video.")
         return
     
-    # Verification-based free user flow - user needs to verify
+    # Verification is enabled and user not verified
+    # Check free trial count
     free_trial_count = db_user.get("free_trial_count", 0)
+    print(f"[VIDEO-LOGIC] Free trial count: {free_trial_count}/{FREE_VIDEOS_COUNT}")
     
     # Allow first N free videos without verification
     if free_trial_count < FREE_VIDEOS_COUNT:
+        print(f"[VIDEO-LOGIC] Sending free trial video {free_trial_count + 1}/{FREE_VIDEOS_COUNT}")
         videos = await mdb.get_free_videos()
         if not videos:
             await reply_func("No videos available at the moment.")
@@ -486,6 +495,7 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
                 return
             
             await mdb.increment_free_trial_count(user_id)
+            print(f"[VIDEO-LOGIC] Free trial video sent, count incremented")
             
         except Exception as e:
             print(f"[VIDEO-LOGIC] Error in free trial flow: {e}")
@@ -494,12 +504,17 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
             await reply_func("Failed to send video.")
         return
     
-    # Free trial exhausted - Check which verification is needed
+    # Free trial exhausted - determine which verification is needed
+    print(f"[VIDEO-LOGIC] Free trial exhausted, checking which verification needed")
+    
     need_second = await mdb.use_second_shortener(user_id, VERIFY_EXPIRE_TIME)
     need_third = await mdb.use_third_shortener(user_id, VERIFY_EXPIRE_TIME)
     
+    print(f"[VIDEO-LOGIC] Need 2nd: {need_second}, Need 3rd: {need_third}")
+    
     # Determine which verification to show
     if need_third:
+        print(f"[VIDEO-LOGIC] Showing 3rd verification request")
         # Need third verification
         verify_hash = encode_string(f"verify3_{user_id}_{random.randint(1000, 9999)}")
         await mdb.create_verify_id(user_id, verify_hash)
@@ -527,6 +542,7 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         return
         
     elif need_second:
+        print(f"[VIDEO-LOGIC] Showing 2nd verification request")
         # Need second verification
         verify_hash = encode_string(f"verify2_{user_id}_{random.randint(1000, 9999)}")
         await mdb.create_verify_id(user_id, verify_hash)
@@ -554,6 +570,7 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         return
         
     else:
+        print(f"[VIDEO-LOGIC] Showing 1st verification request")
         # Need first verification
         verify_hash = encode_string(f"verify_{user_id}_{random.randint(1000, 9999)}")
         await mdb.create_verify_id(user_id, verify_hash)
