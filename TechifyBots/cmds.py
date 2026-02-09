@@ -212,8 +212,6 @@ async def send_or_edit_video(client: Client, user_id: int, chat_id: int, video_i
         raise
 
 async def send_random_video_logic(client: Client, user, chat_id, reply_func, edit_message=None):
-    from .verify_utils import encode_string, get_shortlink
-    
     limits = await get_updated_limits()
     if limits.get('maintenance', False):
         await reply_func("**🛠️ Bot Under Maintenance — Back Soon!**")
@@ -376,5 +374,6 @@ async def send_random_video(client: Client, message: Message):
         chat_id=message.chat.id,
         reply_func=message.reply_text
     )
+
 
 
