@@ -275,7 +275,6 @@ async def send_or_edit_video(client: Client, user_id: int, chat_id: int, video_i
 
 async def send_random_video_logic(client: Client, user, chat_id, reply_func, edit_message=None):
     from .verify_utils import encode_string, get_shortlink
-    import pytz
     
     limits = await get_updated_limits()
     if limits.get('maintenance', False):
@@ -283,320 +282,146 @@ async def send_random_video_logic(client: Client, user, chat_id, reply_func, edi
         return
     
     user_id = user.id
-    
-    # CRITICAL FIX: Always fetch fresh user data to avoid stale cache issues
     db_user = await mdb.get_user(user_id)
     plan = db_user.get("plan", "free")
     
     print(f"[VIDEO-LOGIC] User {user_id} requesting video, plan: {plan}")
-    
-    # Premium users get unlimited access (with daily limit)
+
+    # ================= PREMIUM USER =================
     if plan == "prime":
         videos = await mdb.get_all_videos()
         if not videos:
             await reply_func("No videos available at the moment.")
             return
+
         random_video = random.choice(videos)
         daily_count = db_user.get("daily_count", 0)
         daily_limit = db_user.get("daily_limit", PRIME_LIMIT)
+
         if daily_count >= daily_limit:
             await reply_func(
                 f"**🚫 You've reached your daily limit of {daily_limit} videos.\n\n"
                 f">Limit will reset every day at 5 AM (IST).**"
             )
             return
-        
-        try:
-            caption_text = (
-                f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>\n\n"
-                f"<b>💎 Premium User - Unlimited Access!</b>\n"
-                f"<i>Enjoy unlimited videos with your premium subscription!</i>"
-            )
-            
-            try:
-                await send_or_edit_video(
-                    client=client,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    video_id=random_video["video_id"],
-                    caption=caption_text,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
-                )
-            except Exception as send_error:
-                print(f"[VIDEO-LOGIC] Failed to send video, trying another: {send_error}")
-                await reply_func(f"**⚠️ Video unavailable, trying another...**")
-                await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
-                return
-            
-            await mdb.increment_daily_count(user_id)
-            
-        except Exception as e:
-            print(f"[VIDEO-LOGIC] Error in premium flow: {e}")
-            import traceback
-            traceback.print_exc()
-            await reply_func("Failed to send video.")
-        return
-    
-    # For free users: Check verification status FIRST (CRITICAL FIX)
-    # We check verification BEFORE checking free_trial_count
-    # This ensures verified users get unlimited access
-    
-    first_valid = await mdb.is_user_verified(user_id)
-    second_valid = await mdb.user_verified(user_id)
-    third_valid = await mdb.third_verified(user_id)
-    
-    print(f"[VIDEO-LOGIC] Verification status - 1st: {first_valid}, 2nd: {second_valid}, 3rd: {third_valid}")
-    
-    # If user has ANY valid verification, give UNLIMITED access
-    if third_valid or second_valid or first_valid:
-        print(f"[VIDEO-LOGIC] User has valid verification, sending unlimited video")
-        videos = await mdb.get_free_videos()
-        if not videos:
-            await reply_func("No videos available at the moment.")
-            return
-        random_video = random.choice(videos)
-        
-        try:
-            # Determine which verification is active
-            if third_valid:
-                verify_msg = "<b>✅ Third Verification Active!</b>\n"
-                from vars import VERIFY_STAGES
-                from TechifyBots.verify_utils import format_time_remaining
-                expiry_info = f"<i>Valid for: {format_time_remaining(VERIFY_STAGES[3])}</i>"
-            elif second_valid:
-                verify_msg = "<b>✅ Second Verification Active!</b>\n"
-                from vars import VERIFY_STAGES
-                from TechifyBots.verify_utils import format_time_remaining
-                expiry_info = f"<i>Valid for: {format_time_remaining(VERIFY_STAGES[2])}</i>"
-            else:
-                verify_msg = "<b>✅ First Verification Active!</b>\n"
-                from vars import VERIFY_STAGES
-                from TechifyBots.verify_utils import format_time_remaining
-                expiry_info = f"<i>Valid for: {format_time_remaining(VERIFY_STAGES[1])}</i>"
-            
-            caption_text = (
-                f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>\n\n"
-                f"{verify_msg}"
-                f"{expiry_info}\n"
-                f"<i>Enjoy unlimited videos until verification expires!</i>"
-            )
-            
-            try:
-                await send_or_edit_video(
-                    client=client,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    video_id=random_video["video_id"],
-                    caption=caption_text,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
-                )
-            except Exception as send_error:
-                print(f"[VIDEO-LOGIC] Failed to send video, trying another: {send_error}")
-                await reply_func(f"**⚠️ Video unavailable, trying another...**")
-                await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
-                return
-            
-            # Do NOT increment free_trial_count for verified users!
-            print(f"[VIDEO-LOGIC] Video sent successfully to verified user")
-            
-        except Exception as e:
-            print(f"[VIDEO-LOGIC] Error in verified flow: {e}")
-            import traceback
-            traceback.print_exc()
-            await reply_func("Failed to send video.")
-        return
-    
-    # No valid verification - check if verification is disabled
-    if not IS_VERIFY:
-        print(f"[VIDEO-LOGIC] Verification disabled, using daily limit system")
-        videos = await mdb.get_free_videos()
-        if not videos:
-            await reply_func("No videos available at the moment.")
-            return
-        random_video = random.choice(videos)
-        daily_count = db_user.get("daily_count", 0)
-        daily_limit = db_user.get("daily_limit", FREE_LIMIT)
-        if daily_count >= daily_limit:
-            await reply_func(
-                f"**🚫 You've reached your daily limit of {daily_limit} videos.\n\n"
-                f">Limit will reset every day at 5 AM (IST).**",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🍿 Buy Subscription 🍾", callback_data="pro")]])
-            )
-            return
-        
-        try:
-            caption_text = (
-                f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>\n\n"
-                f"<b>🆓 Free Video</b>\n\n"
-                f"<b>📊 Today Used: {daily_count + 1}/{daily_limit}</b>\n"
-                f"<b>📝 Remaining: {daily_limit - daily_count - 1}</b>"
-            )
-            
-            try:
-                await send_or_edit_video(
-                    client=client,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    video_id=random_video["video_id"],
-                    caption=caption_text,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
-                )
-            except Exception as send_error:
-                print(f"[VIDEO-LOGIC] Failed to send video, trying another: {send_error}")
-                await reply_func(f"**⚠️ Video unavailable, trying another...**")
-                await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
-                return
-            
-            await mdb.increment_daily_count(user_id)
-            
-        except Exception as e:
-            print(f"[VIDEO-LOGIC] Error in free flow: {e}")
-            import traceback
-            traceback.print_exc()
-            await reply_func("Failed to send video.")
-        return
-    
-    # Verification is enabled and user not verified
-    # Check free trial count
-    free_trial_count = db_user.get("free_trial_count", 0)
-    print(f"[VIDEO-LOGIC] Free trial count: {free_trial_count}/{FREE_VIDEOS_COUNT}")
-    
-    # Allow first N free videos without verification
-    if free_trial_count < FREE_VIDEOS_COUNT:
-        print(f"[VIDEO-LOGIC] Sending free trial video {free_trial_count + 1}/{FREE_VIDEOS_COUNT}")
-        videos = await mdb.get_free_videos()
-        if not videos:
-            await reply_func("No videos available at the moment.")
-            return
-        random_video = random.choice(videos)
-        
-        try:
-            remaining = FREE_VIDEOS_COUNT - free_trial_count - 1
-            caption_text = (
-                f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>\n\n"
-                f"<b>🎁 Free Trial: {free_trial_count + 1}/{FREE_VIDEOS_COUNT}</b>\n"
-                f"<b>📝 Remaining: {remaining}</b>\n\n"
-                f"<i>After {FREE_VIDEOS_COUNT} videos, verify to continue!</i>"
-            )
-            
-            try:
-                await send_or_edit_video(
-                    client=client,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    video_id=random_video["video_id"],
-                    caption=caption_text,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
-                )
-            except Exception as send_error:
-                print(f"[VIDEO-LOGIC] Failed to send video, trying another: {send_error}")
-                await reply_func(f"**⚠️ Video unavailable, trying another...**")
-                await send_random_video_logic(client, user, chat_id, reply_func, edit_message=None)
-                return
-            
-            await mdb.increment_free_trial_count(user_id)
-            print(f"[VIDEO-LOGIC] Free trial video sent, count incremented")
-            
-        except Exception as e:
-            print(f"[VIDEO-LOGIC] Error in free trial flow: {e}")
-            import traceback
-            traceback.print_exc()
-            await reply_func("Failed to send video.")
-        return
-    
-    # Free trial exhausted - determine which verification is needed
-    print(f"[VIDEO-LOGIC] Free trial exhausted, checking which verification needed")
-    
-    need_second = await mdb.use_second_shortener(user_id, VERIFY_EXPIRE_TIME)
-    need_third = await mdb.use_third_shortener(user_id, VERIFY_EXPIRE_TIME)
-    
-    print(f"[VIDEO-LOGIC] Need 2nd: {need_second}, Need 3rd: {need_third}")
-    
-    # Determine which verification to show
-    if need_third:
-        print(f"[VIDEO-LOGIC] Showing 3rd verification request")
-        # Need third verification
-        verify_hash = encode_string(f"verify3_{user_id}_{random.randint(1000, 9999)}")
-        await mdb.create_verify_id(user_id, verify_hash)
-        
-        verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify3_{user_id}_{verify_hash}"
-        shortlink = get_shortlink(verify_url, SHORTENER_API3, SHORTENER_WEBSITE3)
-        
-        btn = [
-            [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
-            [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL3)]
-        ]
-        
-        from vars import VERIFY_STAGES
-        from TechifyBots.verify_utils import format_time_remaining
-        
-        msg_text = (
-            f"<b>🔐 Verification Required (3/3)</b>\n\n"
-            f"<b>Second verification expired!</b>\n\n"
-            f"<b>Complete final verification to continue.</b>\n\n"
-            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[3])}</b>\n\n"
-            f"<b>💎 Premium users skip verification!</b>"
+
+        caption_text = (
+            f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>\n\n"
+            f"<b>💎 Premium User - Unlimited Access!</b>"
         )
-        
-        await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
-        return
-        
-    elif need_second:
-        print(f"[VIDEO-LOGIC] Showing 2nd verification request")
-        # Need second verification
-        verify_hash = encode_string(f"verify2_{user_id}_{random.randint(1000, 9999)}")
-        await mdb.create_verify_id(user_id, verify_hash)
-        
-        verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify2_{user_id}_{verify_hash}"
-        shortlink = get_shortlink(verify_url, SHORTENER_API2, SHORTENER_WEBSITE2)
-        
-        btn = [
-            [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
-            [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL2)]
-        ]
-        
-        from vars import VERIFY_STAGES
-        from TechifyBots.verify_utils import format_time_remaining
-        
-        msg_text = (
-            f"<b>🔐 Verification Required (2/3)</b>\n\n"
-            f"<b>First verification expired!</b>\n\n"
-            f"<b>Complete 2nd verification to continue.</b>\n\n"
-            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[2])}</b>\n\n"
-            f"<b>💎 Premium users skip verification!</b>"
+
+        await send_or_edit_video(
+            client=client,
+            user_id=user_id,
+            chat_id=chat_id,
+            video_id=random_video["video_id"],
+            caption=caption_text,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
         )
-        
-        await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
-        return
-        
-    else:
-        print(f"[VIDEO-LOGIC] Showing 1st verification request")
-        # Need first verification
-        verify_hash = encode_string(f"verify_{user_id}_{random.randint(1000, 9999)}")
-        await mdb.create_verify_id(user_id, verify_hash)
-        
-        verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify_{user_id}_{verify_hash}"
-        shortlink = get_shortlink(verify_url, SHORTENER_API1, SHORTENER_WEBSITE1)
-        
-        btn = [
-            [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
-            [InlineKeyboardButton("📚 How To Verify?", url=TUTORIAL1)]
-        ]
-        
-        from vars import VERIFY_STAGES
-        from TechifyBots.verify_utils import format_time_remaining
-        
-        msg_text = (
-            f"<b>🔐 Verification Required (1/3)</b>\n\n"
-            f"<b>You've used your {FREE_VIDEOS_COUNT} free videos!</b>\n\n"
-            f"<b>Complete verification for unlimited access.</b>\n\n"
-            f"<b>⏰ Valid for: {format_time_remaining(VERIFY_STAGES[1])}</b>\n\n"
-            f"<b>💎 Premium users skip verification!</b>"
-        )
-        
-        await reply_func(msg_text, reply_markup=InlineKeyboardMarkup(btn), disable_web_page_preview=True)
+
+        await mdb.increment_daily_count(user_id)
         return
 
+
+    # ================= TIMER VERIFICATION SYSTEM =================
+
+    is_valid, stage = await mdb.get_verify_status(user_id)
+
+    print(f"[TIMER] valid={is_valid} stage={stage}")
+
+    # ---- USER IS VERIFIED (TIMER ACTIVE) ----
+    if is_valid:
+
+        videos = await mdb.get_free_videos()
+        if not videos:
+            await reply_func("No videos available at the moment.")
+            return
+
+        random_video = random.choice(videos)
+
+        caption_text = (
+            f"<b>✅ Verified Stage {stage}</b>\n"
+            f"<i>Unlimited access until timer ends</i>\n\n"
+            f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>"
+        )
+
+        await send_or_edit_video(
+            client=client,
+            user_id=user_id,
+            chat_id=chat_id,
+            video_id=random_video["video_id"],
+            caption=caption_text,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
+        )
+
+        return
+
+
+    # ---- NOT VERIFIED → CHECK FREE TRIAL ----
+
+    free_trial_count = db_user.get("free_trial_count", 0)
+    print(f"[VIDEO-LOGIC] Free trial count: {free_trial_count}/{FREE_VIDEOS_COUNT}")
+
+    if free_trial_count < FREE_VIDEOS_COUNT:
+
+        print(f"[VIDEO-LOGIC] Sending free trial video {free_trial_count + 1}/{FREE_VIDEOS_COUNT}")
+
+        videos = await mdb.get_free_videos()
+        if not videos:
+            await reply_func("No videos available at the moment.")
+            return
+
+        random_video = random.choice(videos)
+
+        remaining = FREE_VIDEOS_COUNT - free_trial_count - 1
+
+        caption_text = (
+            f"<b><blockquote>⚠️ This video will auto-delete after 5 minutes of inactivity!</blockquote></b>\n\n"
+            f"<b>🎁 Free Trial: {free_trial_count + 1}/{FREE_VIDEOS_COUNT}</b>\n"
+            f"<b>📝 Remaining: {remaining}</b>\n\n"
+            f"<i>After {FREE_VIDEOS_COUNT} videos, verify to continue!</i>"
+        )
+
+        await send_or_edit_video(
+            client=client,
+            user_id=user_id,
+            chat_id=chat_id,
+            video_id=random_video["video_id"],
+            caption=caption_text,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔁 Get Next Video", callback_data="getvideos_cb")]])
+        )
+
+        await mdb.increment_free_trial_count(user_id)
+        return
+
+
+    # ================= NEED VERIFICATION =================
+
+    next_stage = await mdb.next_stage(user_id)
+    print(f"[TIMER] Need stage {next_stage}")
+    verify_hash = encode_string(f"verify{next_stage}_{user_id}_{random.randint(1000,9999)}")
+    await mdb.create_verify_id(user_id, verify_hash)
+    verify_url = f"https://telegram.me/{(await client.get_me()).username}?start=verify{next_stage}_{user_id}_{verify_hash}"
+    if next_stage == 1:
+        shortlink = get_shortlink(verify_url, SHORTENER_API1, SHORTENER_WEBSITE1)
+        tutorial = TUTORIAL1
+    elif next_stage == 2:
+        shortlink = get_shortlink(verify_url, SHORTENER_API2, SHORTENER_WEBSITE2)
+        tutorial = TUTORIAL2
+    else:
+        shortlink = get_shortlink(verify_url, SHORTENER_API3, SHORTENER_WEBSITE3)
+        tutorial = TUTORIAL3
+    btn = [
+        [InlineKeyboardButton("✅ Click Here To Verify", url=shortlink)],
+        [InlineKeyboardButton("📚 How To Verify?", url=tutorial)]
+    ]
+    await reply_func(
+        f"<b>🔐 Verification Required (Stage {next_stage}/3)</b>\n\n"
+        f"<b>Complete verification to continue.</b>",
+        reply_markup=InlineKeyboardMarkup(btn),
+        disable_web_page_preview=True
+    )
+    return
 
 @Client.on_message(filters.command("getvideos") & filters.private)
 async def send_random_video(client: Client, message: Message):
@@ -613,3 +438,4 @@ async def send_random_video(client: Client, message: Message):
         chat_id=message.chat.id,
         reply_func=message.reply_text
     )
+
