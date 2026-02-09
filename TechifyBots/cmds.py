@@ -4,8 +4,7 @@ from pyrogram.errors import MessageNotModified, MessageEmpty, MessageIdInvalid
 from vars import *
 from Database.maindb import mdb
 from Database.userdb import udb
-from datetime import datetime
-import pytz, random, asyncio
+import random, asyncio
 from .fsub import get_fsub
 from Script import text
 
@@ -57,100 +56,39 @@ async def start_command(client, message):
     )
 
 async def handle_verification(client: Client, message: Message, data: str):
-    """Handle verification callback when user clicks verify link"""
-    import pytz
-    
     try:
         parts = data.split("_")
         verify_type = parts[0]
         verify_user_id = int(parts[1])
-        verify_hash = "_".join(parts[2:])
-        
         if message.from_user.id != verify_user_id:
-            await message.reply("**⚠️ This verification link is not for you!**")
+            await message.reply("⚠️ This verification link is not for you!")
             return
-        
-        verify_info = await mdb.get_verify_id_info(verify_user_id, verify_hash)
-        if not verify_info:
-            await message.reply("**⚠️ Invalid verification link!**")
-            return
-        
-        if verify_info.get("verified"):
-            await message.reply("**⚠️ This verification link has already been used!**")
-            return
-        
-        ist_timezone = pytz.timezone('Asia/Kolkata')
-        current_time = datetime.now(tz=ist_timezone)
-        
-        # Update user verification timestamp
-        if verify_type == "verify":
-            await mdb.update_user(verify_user_id, {
-                "last_verified": current_time
-            })
-            verify_num = 1
-            from vars import VERIFY_STAGES
-            from TechifyBots.verify_utils import format_time_remaining
-            expiry_time = format_time_remaining(VERIFY_STAGES[1])
-            msg_text = f"**✅ First Verification Complete!**\n\n<b>You can now access unlimited videos for {expiry_time}!</b>\n\n<i>After the first verification expires, you'll need to complete the second verification.</i>"
+        if verify_type in ["verify", "verify1"]:
+            stage = 1
         elif verify_type == "verify2":
-            await mdb.update_user(verify_user_id, {
-                "second_time_verified": current_time
-            })
-            verify_num = 2
-            from vars import VERIFY_STAGES
-            from TechifyBots.verify_utils import format_time_remaining
-            expiry_time = format_time_remaining(VERIFY_STAGES[2])
-            msg_text = f"**✅ Second Verification Complete!**\n\n<b>You can now access unlimited videos for {expiry_time}!</b>\n\n<i>After the second verification expires, you'll need to complete the third verification.</i>"
+            stage = 2
         elif verify_type == "verify3":
-            await mdb.update_user(verify_user_id, {
-                "third_time_verified": current_time
-            })
-            verify_num = 3
-            from vars import VERIFY_STAGES
-            from TechifyBots.verify_utils import format_time_remaining
-            expiry_time = format_time_remaining(VERIFY_STAGES[3])
-            msg_text = f"**✅ Third Verification Complete!**\n\n<b>You can now access unlimited videos for {expiry_time}!</b>\n\n<i>This is the final verification for today!</i>"
+            stage = 3
         else:
-            await message.reply("**⚠️ Invalid verification type!**")
+            await message.reply("⚠️ Invalid verification type!")
             return
-        
-        # Mark verification as used
-        await mdb.update_verify_id_info(verify_user_id, verify_hash, {"verified": True})
-        
-        print(f"[VERIFY] User {verify_user_id} completed verification {verify_num}")
-        
+        duration = VERIFY_STAGES[stage]
+        await mdb.set_verify_timer(verify_user_id, stage, duration)
+        print(f"[TIMER] User {verify_user_id} verified stage {stage} for {duration}s")
         await message.reply_photo(
             photo=VERIFY_IMG,
-            caption=msg_text,
+            caption=(
+                f"✅ Verification {stage} completed!\n\n"
+                f"⏱ Valid for {duration} seconds\n\n"
+                "Click below to get videos"
+            ),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🎥 Get Videos Now", callback_data="getvideos_cb")]
             ])
         )
-        
-        try:
-            username = f"@{message.from_user.username}" if message.from_user.username else "No Username"
-            first_name = message.from_user.first_name or "No Name"
-            
-            await client.send_message(
-                LOG_VR_CHANNEL,
-                f"**✅ Verification Complete**\n\n"
-                f"**User:** {message.from_user.mention} (`{first_name}`)\n"
-                f"**User ID:** `{verify_user_id}`\n"
-                f"**Username:** {username}\n"
-                f"**Verification Level:** {verify_num}/3\n"
-                f"**Time:** {current_time.strftime('%d %B %Y, %I:%M %p IST')}"
-            )
-            print(f"[VERIFY-LOG] Sent verification log to channel for user {verify_user_id}, level {verify_num}")
-        except Exception as e:
-            print(f"[VERIFY-LOG] Error logging verification to channel: {e}")
-            import traceback
-            traceback.print_exc()
-    
     except Exception as e:
-        print(f"[VERIFY-ERROR] Verification error: {e}")
-        import traceback
-        traceback.print_exc()
-        await message.reply("**⚠️ Verification failed! Please try again.**")
+        print(f"[VERIFY-ERROR] {e}")
+        await message.reply("Verification failed!")
 
 async def auto_delete_video(user_id: int, message: Message, delay: int = 300):
     """Auto delete video after delay if no new request comes"""
@@ -438,4 +376,5 @@ async def send_random_video(client: Client, message: Message):
         chat_id=message.chat.id,
         reply_func=message.reply_text
     )
+
 
