@@ -4,13 +4,22 @@ from pyrogram.errors import MessageNotModified, MessageEmpty, MessageIdInvalid
 from vars import *
 from Database.maindb import mdb
 from Database.userdb import udb
-import random, asyncio
+import random, asyncio, base64
 from .fsub import get_fsub
 from Script import text
 
 # Video message cache (user_id: {"msg": message_object, "delete_task": task})
 VIDEO_MSG_CACHE = {}
 
+def encode_string(text: str):
+    return base64.urlsafe_b64encode(text.encode()).decode()
+
+def get_shortlink(url, api, website):
+    try:
+        return f"{website}/api?api={api}&url={url}"
+    except:
+        return url
+            
 async def get_updated_limits():
         global FREE_LIMIT, PRIME_LIMIT
         limits = await mdb.get_global_limits()
@@ -374,6 +383,7 @@ async def send_random_video(client: Client, message: Message):
         chat_id=message.chat.id,
         reply_func=message.reply_text
     )
+
 
 
 
