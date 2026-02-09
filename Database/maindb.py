@@ -304,130 +304,6 @@ class Database:
             await self.update_user(user_id, {"free_trial_count": new_count})
             return new_count
 
-
-    async def is_user_verified(self, user_id: int):
-        user = await self.get_user(user_id)
-        if user.get("plan") == "prime":
-            return True
-        verify_time = user.get("last_verified")
-        if not verify_time:
-            return False
-        ist = pytz.timezone("Asia/Kolkata")
-        if verify_time.tzinfo is None:
-            verify_time = ist.localize(verify_time)
-        now = datetime.now(ist)
-        diff = (now - verify_time).total_seconds()
-        print(f"[VERIFY-CHECK] 1st diff seconds: {diff}")
-        return diff < VERIFY_STAGES[1]
-
-    async def user_verified(self, user_id: int):
-        user = await self.get_user(user_id)
-        if user.get("plan") == "prime":
-            return True
-        verify_time = user.get("second_time_verified")
-        if not verify_time:
-            return False
-        ist = pytz.timezone("Asia/Kolkata")
-        if verify_time.tzinfo is None:
-            verify_time = ist.localize(verify_time)
-        now = datetime.now(ist)
-        diff = (now - verify_time).total_seconds()
-        print(f"[VERIFY-CHECK] 2nd diff seconds: {diff}")
-        return diff < VERIFY_STAGES[2]
-
-    async def third_verified(self, user_id: int):
-        user = await self.get_user(user_id)
-        if user.get("plan") == "prime":
-            return True
-        verify_time = user.get("third_time_verified")
-        if not verify_time:
-            return False
-        ist = pytz.timezone("Asia/Kolkata")
-        if verify_time.tzinfo is None:
-            verify_time = ist.localize(verify_time)
-        now = datetime.now(ist)
-        diff = (now - verify_time).total_seconds()
-        print(f"[VERIFY-CHECK] 3rd diff seconds: {diff}")
-        return diff < VERIFY_STAGES[3]
-
-    async def use_second_shortener(self, user_id: int, time: int):
-        """Check if user needs second verification (1st expired, 2nd not done)"""
-        user = await self.get_user(user_id)
-        
-        # If premium, no verification needed
-        if user.get("plan") == "prime":
-            return False
-        
-        # If 1st verification is still valid, don't need 2nd
-        if await self.is_user_verified(user_id):
-            return False
-        
-        # If 2nd verification is still valid, don't need to verify again
-        if await self.user_verified(user_id):
-            return False
-            
-        # If 3rd is valid, don't need 2nd
-        if await self.third_verified(user_id):
-            return False
-        
-        # Check if 1st verification was done but expired
-        if not user.get("last_verified"):
-            return False  # 1st never done, shouldn't skip to 2nd
-            
-        ist_timezone = pytz.timezone('Asia/Kolkata')
-        first_verify_time = user["last_verified"]
-        
-        if first_verify_time.tzinfo is None:
-            first_verify_time = first_verify_time.replace(tzinfo=ist_timezone)
-        else:
-            first_verify_time = first_verify_time.astimezone(ist_timezone)
-        
-        # Check if first verification time is from today
-        # (not a default old timestamp from 2020)
-        if first_verify_time.year <= 2020:
-            return False
-            
-        # 1st verification was done but has expired
-        # Need 2nd verification
-        return True
-
-    async def use_third_shortener(self, user_id: int, time: int):
-        """Check if user needs third verification (2nd expired, 3rd not done)"""
-        user = await self.get_user(user_id)
-        
-        # If premium, no verification needed
-        if user.get("plan") == "prime":
-            return False
-        
-        # If 2nd verification is still valid, don't need 3rd
-        if await self.user_verified(user_id):
-            return False
-            
-        # If 3rd is already valid, don't need to verify again
-        if await self.third_verified(user_id):
-            return False
-        
-        # Check if 2nd verification was done but expired
-        if not user.get("second_time_verified"):
-            return False  # 2nd never done, shouldn't skip to 3rd
-            
-        ist_timezone = pytz.timezone('Asia/Kolkata')
-        second_verify_time = user["second_time_verified"]
-        
-        if second_verify_time.tzinfo is None:
-            second_verify_time = second_verify_time.replace(tzinfo=ist_timezone)
-        else:
-            second_verify_time = second_verify_time.astimezone(ist_timezone)
-        
-        # Check if second verification time is from today
-        # (not a default old timestamp from 2019)
-        if second_verify_time.year <= 2019:
-            return False
-            
-        # 2nd verification was done but has expired
-        # Need 3rd verification
-        return True
-
     async def create_verify_id(self, user_id: int, verify_hash: str):
         """Create a verification ID record"""
         verify_collection = self.async_db["verify_ids"]
@@ -478,7 +354,31 @@ class Database:
 
         return user, updated
 
+    async def set_verify_timer(self, user_id: int, stage: int, seconds: int):
+        expire = int(time.time()) + int(seconds)
+        await self.update_user(user_id, {
+            "verify_stage": stage,
+            "verify_expire": expire
+        })
 
+    async def get_verify_status(self, user_id: int):
+        user = await self.get_user(user_id)
+        if user.get("plan") == "prime":
+            return True, 0
+        expire = user.get("verify_expire", 0)
+        stage = user.get("verify_stage", 0)
+        now = int(time.time())
+        if expire and expire > now:
+            return True, stage
+        return False, stage
+        
+    async def next_stage(self, user_id: int):
+        user = await self.get_user(user_id)
+        stage = user.get("verify_stage", 0)
+        next_stage = stage + 1
+        if next_stage > 3:
+            next_stage = 1
+        return next_stage
 # ==================================================================
 
 def format_remaining_time(expiry):
@@ -490,5 +390,6 @@ def format_remaining_time(expiry):
     return f"{days}d {hours}h {minutes}m {seconds}s"
 
 mdb = Database()
+
 
 
