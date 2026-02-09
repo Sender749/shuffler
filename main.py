@@ -1,8 +1,12 @@
+import asyncio
 from bot import bot
-from pyrogram import idle
 
-async def start():
+async def main():
+    """Main entry point for the bot"""
     await bot.start()
+    print("Bot started successfully!")
+    # Keep the bot running
+    await asyncio.Event().wait()
 
-bot.loop.create_task(start())
-idle()
+if __name__ == "__main__":
+    asyncio.run(main())
