@@ -1,5 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.types import *
+from pyrogram.types import InputMediaVideo, InputMediaPhoto, InputMediaDocument, InputMediaAnimation
 from pyrogram.errors import MessageNotModified, MessageEmpty, MessageIdInvalid
 from vars import *
 from Database.maindb import mdb
